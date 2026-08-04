@@ -11,7 +11,7 @@ load_dotenv()
 
 GEMINI_KEY = os.getenv("GEMINI_KEY")
 SUPABASE_URL = os.getenv("SUPABASE_URL")
-SUPABASE_KEY = os.getenv("SUPABASE_SERVICE_KEY")
+SUPABASE_KEY = os.getenv("SUPABASE_KEY")
 PDF_PATH = os.getenv("PDF_PATH", "knowledge_base.pdf")
 
 # Configure the Gemini model (same setup as the weather agent demo)
