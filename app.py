@@ -5,6 +5,7 @@ from dotenv import load_dotenv
 import google.generativeai as genai
 from pypdf import PdfReader
 import requests
+from pypdf import PdfReader
 
 # Load our keys from the .env file
 load_dotenv()
