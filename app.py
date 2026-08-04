@@ -22,20 +22,27 @@ model = genai.GenerativeModel("gemini-2.5-flash")
 # Flask is what lets a website talk to this Python file over the internet
 # (input()/print() only work in a terminal, a website can't use those)
 app = Flask(__name__)
-CORS(app)
+CORS(app)  # This opens the door for your website to talk to the server
 
+@app.route('/chat', methods=['POST', 'OPTIONS'])
+def chat():
+    # This part handles the browser's test request and says "All clear, proceed!"
+    if request.method == 'OPTIONS':
+        return '', 200
+        
+    data = request.get_json()
+    message = data.get('message', '')
+    
+    # --- Put your existing PDF reading and Gemini AI code right here ---
+    
+    return jsonify({"reply": "AI response here"})
 
-# Step 1: read the whole PDF one time when the server starts
-def read_pdf_text(path: str) -> str:
-    reader = PdfReader(path)
-    full_text = ""
-    for page in reader.pages:
-        full_text = full_text + page.extract_text()
-    return full_text
+@app.route('/health', methods=['GET'])
+def health():
+    return jsonify({"status": "ok"})
 
-
-pdf_text = read_pdf_text(PDF_PATH)
-print("PDF loaded. Characters:", len(pdf_text))
+if __name__ == '__main__':
+    app.run(host='0.0.0.0', port=5000)
 
 
 # Step 2: answer the user's question using the PDF content as context
