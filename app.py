@@ -51,7 +51,7 @@ def read_pdf_text(path: str) -> str:
     return full_text
 
 
-def split_into_chunks(text: str, chunk_size: int = 600) -> list[str]:
+def split_into_chunks(text: str, chunk_size: int = 1000) -> list[str]:
     # This is a simple way to split text: just cut it every 600 characters.
     # It's not perfect (it might cut a sentence in half) but it's simple
     # and works fine for a knowledge base like ours.
