@@ -76,11 +76,18 @@ print("PDF loaded. Characters:", len(pdf_text), "| Chunks:", len(pdf_chunks))
 # use a simple and easy-to-understand method: count how many of the
 # SAME WORDS appear in both the question and each chunk. The chunk with
 # the most matching words is probably the most relevant one.
+#
+# IMPORTANT FIX: the word pattern below now matches BOTH English letters
+# (a-z, A-Z) AND Arabic letters (the \u0600-\u06FF range). Before this
+# fix, get_words() only understood English, so any Arabic question ended
+# up with an EMPTY word set, which made it look "out of scope" every
+# single time - even for perfectly normal Arabic questions about pricing
+# or billing. This one line is what makes Arabic actually work.
 
 def get_words(text: str) -> set:
     # turns a sentence into a set of lowercase words, ignoring punctuation
-    # example: "What's the price?" -> {"what", "s", "the", "price"}
-    words = re.findall(r"[a-zA-Z]+", text.lower())
+    # works for both English and Arabic text
+    words = re.findall(r"[a-zA-Z\u0600-\u06FF]+", text.lower())
     return set(words)
 
 
@@ -101,6 +108,65 @@ def find_relevant_chunks(user_message: str, top_n: int = 3) -> list:
 
 
 # =========================================================
+# STEP 2b: DETECT SMALL TALK (greetings, thanks, etc.)
+# =========================================================
+# The strict "only answer from the PDF" rule is great for real questions,
+# but it made the assistant refuse even simple things like "hi" or
+# "thank you" (since those words don't appear anywhere in our knowledge
+# base). That felt cold and robotic. So we handle small talk separately,
+# with a relaxed, friendly prompt instead of the strict grounded one.
+#
+# Two ways a message counts as small talk:
+#   1) It contains a known greeting/small-talk word (Arabic or English).
+#   2) OR it's just a very short message with no question mark - this
+#      covers greetings in ANY other language (French, Urdu, etc.)
+#      without us having to hardcode every language's word for "hi".
+
+SMALL_TALK_WORDS = {
+    "hi", "hello", "hey", "hiya", "yo",
+    "thanks", "thank", "thankyou", "ok", "okay", "cool", "great", "nice",
+    "bye", "goodbye", "morning", "evening",
+    "مرحبا", "هلا", "السلام", "عليكم", "وعليكم", "شكرا", "شكرًا",
+    "تمام", "طيب", "اوك", "أوك", "يعطيك", "العافية", "مساء", "صباح", "الخير", "النور"
+}
+
+
+def is_small_talk(user_message: str) -> bool:
+    words = get_words(user_message)
+    text = user_message.strip()
+
+    # Case 1: a known greeting/small-talk word, in a short message
+    if len(words) <= 4 and len(words & SMALL_TALK_WORDS) > 0:
+        return True
+
+    # Case 2: short message, no question mark, in ANY language.
+    # A real question almost always has a "?" or "؟", or is longer than
+    # a quick greeting - so this safely catches "hi" / "salut" /
+    # "namaste" / etc. without needing a word list for every language.
+    if len(text) <= 15 and "?" not in text and "؟" not in text:
+        return True
+
+    return False
+
+
+def answer_small_talk(user_message: str) -> str:
+    prompt = f"""
+You are a warm, friendly customer support assistant for Sahara Net, a
+Saudi telecom and cloud services company. The user just sent a casual
+message (a greeting, thanks, etc.), not a real question:
+
+"{user_message}"
+
+Reply warmly and naturally in 1-2 short sentences, in the SAME language
+the user used (match their language exactly, whatever it is). You can
+mention you're happy to help with anything about Sahara Net's services,
+billing, or support.
+"""
+    response = model.generate_content(prompt)
+    return response.text.strip()
+
+
+# =========================================================
 # STEP 3: ANSWER THE QUESTION USING ONLY THE RELEVANT CHUNKS
 # =========================================================
 # Same idea as final_output() in the weather agent demo: we take real
@@ -110,8 +176,9 @@ def find_relevant_chunks(user_message: str, top_n: int = 3) -> list:
 
 def answer_question(user_message: str, context_text: str) -> str:
     prompt = f"""
-You are a support assistant for Sahara Net. Here is some information from
-the official Sahara Net knowledge base that might help answer the question:
+You are a warm, helpful support assistant for Sahara Net. Here is some
+information from the official Sahara Net knowledge base that might help
+answer the question:
 
 {context_text}
 
@@ -122,8 +189,10 @@ Rules:
   already know from outside this text.
 - If the answer is not fully covered by the information above, say you
   are not sure and suggest contacting human support instead of guessing.
-- Keep the answer short and friendly, 2-4 sentences max.
-- Answer in the same language the user used (Arabic or English).
+- Sound natural and friendly, not robotic - like a helpful human agent,
+  not a legal document. Short and clear, 2-4 sentences max.
+- Answer in the SAME language the user used (Arabic or English) - if
+  they wrote in Arabic, reply fully in Arabic.
 """
     response = model.generate_content(prompt)
     answer = response.text.strip()
@@ -193,11 +262,20 @@ def chat():
     if not user_message:
         return jsonify({"error": "message is required"}), 400
 
-    # Step A: find the chunks that best match this question
+    # Step A: is this just a greeting / small talk? Handle it separately
+    # with a relaxed, friendly reply - skip the strict knowledge-base
+    # rules entirely for these.
+    if is_small_talk(user_message):
+        ai_reply = answer_small_talk(user_message)
+        category = "General"
+        save_chat_log(session_id, user_message, ai_reply, category, customer_id)
+        return jsonify({"reply": ai_reply, "category": category})
+
+    # Step B: find the chunks that best match this real question
     top_chunks = find_relevant_chunks(user_message)
     best_score = top_chunks[0][0]  # how many matching words the BEST chunk had
 
-    # Step B: OUT-OF-SCOPE GUARD
+    # Step C: OUT-OF-SCOPE GUARD
     # If not even ONE word from the question matches anything in our
     # knowledge base, the question is almost certainly not about Sahara
     # Net at all (example: "what's the capital of France?"). In that
@@ -212,16 +290,16 @@ def chat():
         save_chat_log(session_id, user_message, ai_reply, category, customer_id)
         return jsonify({"reply": ai_reply, "category": category})
 
-    # Step C: build the context text out of only the relevant chunks
+    # Step D: build the context text out of only the relevant chunks
     # (NOT the whole PDF - this is what keeps the answer grounded and
     # reduces hallucination)
     context_text = "\n\n---\n\n".join(chunk for score, chunk in top_chunks)
 
-    # Step D: get the answer and the category
+    # Step E: get the answer and the category
     ai_reply = answer_question(user_message, context_text)
     category = classify_category(user_message)
 
-    # Step E: save it to the database
+    # Step F: save it to the database
     save_chat_log(session_id, user_message, ai_reply, category, customer_id)
 
     return jsonify({"reply": ai_reply, "category": category})
