@@ -49,7 +49,7 @@ def read_pdf_text(path: str) -> str:
     return full_text
 
 
-def split_into_chunks(text: str, chunk_size: int = 600) -> list[str]:
+def split_into_chunks(text: str, chunk_size: int = 2000) -> list[str]:
     chunks = []
     for i in range(0, len(text), chunk_size):
         chunk = text[i:i + chunk_size].strip()
@@ -132,8 +132,7 @@ message (a greeting, thanks, etc.), not a real question:
 
 Reply warmly and naturally in 1-2 short sentences, in the SAME language
 the user used (match their language exactly, whatever it is). You can
-mention you're happy to help with anything about Sahara Net's services,
-billing, or support.
+mention you're happy to help with anything about Sahara Net's .
 """
     response = model.generate_content(prompt)
     return response.text.strip()
