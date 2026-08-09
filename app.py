@@ -218,19 +218,42 @@ def create_support_ticket(customer_id, user_message: str, ai_reply: str) -> bool
 # =========================================================
 # STEP 4: CLASSIFY THE QUESTION (same pattern as the routing agent)
 # =========================================================
+# These categories match the real Sahara Net knowledgebase categories.
+# Add or remove categories here anytime - classify_category() always
+# reads from this same list, so you only need to edit it in one place.
+
+CATEGORIES = [
+    "Shared Hosting Linux",
+    "Windows Web Hosting",
+    "General Hosting",
+    "Billing",
+    "DNS - Nameservers",
+    "Saudi Domains",
+    "SSL Certificate Support",
+    "Mail Settings",
+    "Sahara Website Builder",
+    "Mobile and Device Settings",
+    "Internet Services",
+    "General"  # fallback for anything that doesn't clearly fit above
+]
+
 
 def classify_category(user_message: str) -> str:
     prompt = f"""
-Classify this message into exactly one category:
-Billing, Technical, Account, Sales, Cybersecurity, General
+Classify this message into EXACTLY ONE of these categories:
+{", ".join(CATEGORIES)}
 
-Reply with ONLY the category name, nothing else.
+Reply with ONLY the category name from that list, nothing else.
 
 Message: "{user_message}"
 """
     response = model.generate_content(prompt)
     category = response.text.strip()
-    return category
+
+    # Safety net: if Gemini returns something not in our list (typo,
+    # extra words, etc.), fall back to "General" instead of saving a
+    # category that won't match anything in the admin reports chart.
+    return category if category in CATEGORIES else "General"
 
 
 # =========================================================
