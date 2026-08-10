@@ -6,7 +6,7 @@ from dotenv import load_dotenv
 import google.generativeai as genai
 from pypdf import PdfReader
 import requests
-
+from datetime import datetime
 # =========================================================
 # SETUP
 # =========================================================
@@ -162,27 +162,41 @@ Rules:
 # =========================================================
 
 
-def create_support_ticket(customer_id, user_message: str, ai_reply: str) -> bool:
+def create_support_ticket(
+    customer_id, user_message: str, ai_reply: str
+) -> bool:
+    # 1. رفض العملية إذا لم يكن العميل مسجل دخول
     if not customer_id:
-        # We can only attach a ticket to a real logged-in customer,
-        # because support_logs.customer_id is required in our database.
-        # (An anonymous visitor's question just won't get auto-escalated.)
         return False
 
     url = f"{SUPABASE_URL}/rest/v1/support_logs"
     headers = {
         "apikey": SUPABASE_KEY,
         "Authorization": f"Bearer {SUPABASE_KEY}",
-        "Content-Type": "application/json"
+        "Content-Type": "application/json",
     }
+
+    now = datetime.utcnow().isoformat()
+
+    # 2. إرسال البيانات بأسماء الأعمدة المطابقة تماماً لجدولك
     data = {
-        "title": "AI Assistant could not fully answer a question",
-        "content": f"Customer asked: \"{user_message}\"\n\nAI's partial answer: {ai_reply}",
+        "title": "طلب دعم فني تلقائي من البوت",
+        "content": f"سؤال العميل: {user_message}\n\nرد البوت: {ai_reply}",
         "status": "open",
-        "customer_id": customer_id
+        "customer_id": customer_id,
+        "created_date": now,
+        "updated_date": now,
+        "phone": "",  # إرسال نص فارغ لتفادي خطأ NOT NULL
+        "contact_email": "",  # إرسال نص فارغ لتفادي خطأ NOT NULL
     }
+
     response = requests.post(url, headers=headers, json=data)
-    return response.status_code == 201
+
+    # طباعة استجابة Supabase في الشاشة للتحقق (Debug)
+    print("Supabase Status:", response.status_code)
+    print("Supabase Response:", response.text)
+
+    return response.status_code in [200, 201]
 
 
 # =========================================================
@@ -292,10 +306,16 @@ def chat():
     # Step E: NEW - check if the agent marked itself unsure, and if so,
     # decide on its own to open a real support ticket
     ticket_created = False
-    if ai_reply.startswith("UNSURE:"):
-        ai_reply = ai_reply.replace("UNSURE:", "", 1).strip()
-        ticket_created = create_support_ticket(customer_id, user_message, ai_reply)
-
+    if (
+        "UNSURE:" in ai_reply
+        or "فريق الدعم" in ai_reply
+        or "غير متأكد" in ai_reply
+    ):
+        clean_reply = ai_reply.replace("UNSURE:", "").strip()
+        ticket_created = create_support_ticket(
+            customer_id, user_message, clean_reply
+        )
+        
     # Step F: save the conversation either way
     save_chat_log(session_id, user_message, ai_reply, category, customer_id)
 
