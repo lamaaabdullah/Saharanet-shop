@@ -8,6 +8,7 @@ from dotenv import load_dotenv
 from flask import Flask, jsonify, request
 from flask_cors import CORS
 import google.generativeai as genai
+from google.api_core.exceptions import ResourceExhausted
 from pypdf import PdfReader
 import requests
 
@@ -17,32 +18,49 @@ import requests
 
 load_dotenv()
 
+logging.basicConfig(level=logging.INFO)
 
 GEMINI_KEY = os.getenv("GEMINI_KEY")
 SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_KEY = os.getenv("SUPABASE_KEY")
 PDF_PATH = os.getenv("PDF_PATH", "knowledge_base.pdf")
 
-    genai.configure(api_key=GEMINI_KEY)
-    model = genai.GenerativeModel("gemini-2.0-flash")
-
+# تهيئة النموذج بآمان
+model = None
+if GEMINI_KEY:
+    try:
+        genai.configure(api_key=GEMINI_KEY)
+        model = genai.GenerativeModel("gemini-2.0-flash")
+    except Exception as e:
+        logging.error(f"Failed to initialize Gemini Model: {e}")
 
 app = Flask(__name__)
 CORS(app)
 
 
 # =========================================================
-# STEP 1: READ PDF & SPLIT INTO CHUNKS
+# STEP 1: READ PDF & SPLIT INTO CHUNKS (SAFE LOAD)
 # =========================================================
+
+
 def read_pdf_text(path: str) -> str:
-    reader = PdfReader(path)
-    full_text = ""
-    for page in reader.pages:
-        full_text = full_text + page.extract_text()
-    return full_text
+    if not os.path.exists(path):
+        logging.warning(f"PDF file not found at path: {path}")
+        return ""
+    try:
+        reader = PdfReader(path)
+        full_text = ""
+        for page in reader.pages:
+            full_text += page.extract_text() or ""
+        return full_text
+    except Exception as e:
+        logging.error(f"Error reading PDF: {e}")
+        return ""
 
 
 def split_into_chunks(text: str, chunk_size: int = 2000) -> list:
+    if not text:
+        return []
     chunks = []
     for i in range(0, len(text), chunk_size):
         chunk = text[i : i + chunk_size].strip()
@@ -51,14 +69,15 @@ def split_into_chunks(text: str, chunk_size: int = 2000) -> list:
     return chunks
 
 
+# تحميل الملف بأمان عند الإقلاع بدون إسقاط السيرفر
 try:
     pdf_text = read_pdf_text(PDF_PATH)
     pdf_chunks = split_into_chunks(pdf_text)
     logging.info(
-        f"PDF loaded successfully. Characters: {len(pdf_text)} | Chunks: {len(pdf_chunks)}"
+        f"PDF Loaded: {len(pdf_text)} chars | Chunks: {len(pdf_chunks)}"
     )
 except Exception as e:
-    logging.warning(f"Could not load PDF on startup: {e}")
+    logging.error(f"Safe load PDF failed: {e}")
     pdf_text = ""
     pdf_chunks = []
 
@@ -75,6 +94,8 @@ def get_words(text: str) -> set:
 
 def find_relevant_chunks(user_message: str, top_n: int = 3) -> list:
     try:
+        if not pdf_chunks:
+            return []
         question_words = get_words(user_message)
         scored_chunks = []
         for chunk in pdf_chunks:
@@ -152,13 +173,16 @@ Reply warmly in 1-2 short sentences in the SAME language.
 """
         response = model.generate_content(prompt)
         return response.text.strip()
+    except ResourceExhausted:
+        logging.error("Gemini Quota Exceeded in SmallTalk.")
+        return "Hello! Welcome to Sahara Net support. How can I assist you today?"
     except Exception as e:
         logging.error(f"Error in answer_small_talk: {e}")
         return "Hello! How can I help you today with Sahara Net services?"
 
 
 # =========================================================
-# STEP 3: ANSWER QUESTION VIA GEMINI
+# STEP 3: ANSWER QUESTION VIA GEMINI (WITH FALLBACK)
 # =========================================================
 
 
@@ -190,6 +214,9 @@ Rules:
         else:
             return "UNSURE: No response generated."
 
+    except ResourceExhausted:
+        logging.error("Gemini API Quota Exceeded (429). Triggering fallback ticket response.")
+        return "UNSURE: Our AI system is currently experiencing high demand. A support ticket has been created for our team to assist you."
     except Exception as e:
         logging.error(f"GEMINI ERROR DETAILS:\n{traceback.format_exc()}")
         return "UNSURE: An error occurred while generating the answer."
@@ -207,6 +234,9 @@ def create_support_ticket(
     admin_id=None,
 ) -> bool:
     try:
+        if not SUPABASE_URL or not SUPABASE_KEY:
+            return False
+
         url = f"{SUPABASE_URL}/rest/v1/support_logs"
         headers = {
             "apikey": SUPABASE_KEY,
@@ -234,12 +264,10 @@ def create_support_ticket(
             data["admin_id"] = int(admin_id)
 
         response = requests.post(url, headers=headers, json=data, timeout=10)
-        logging.info(
-            f"Ticket Creation Status: {response.status_code} | Body: {response.text}"
-        )
+        logging.info(f"Ticket Creation Status: {response.status_code}")
         return response.status_code in [200, 201]
     except Exception as e:
-        logging.error(f"Error creating support ticket:\n{traceback.format_exc()}")
+        logging.error(f"Error creating support ticket: {e}")
         return False
 
 
@@ -306,7 +334,7 @@ def save_chat_log(
 
         requests.post(url, headers=headers, json=data, timeout=5)
     except Exception as e:
-        logging.error(f"Failed to save chat log:\n{traceback.format_exc()}")
+        logging.error(f"Failed to save chat log: {e}")
 
 
 # =========================================================
@@ -394,6 +422,7 @@ def chat():
             "تواصل مع الدعم",
             "سيتابع معك",
             "An error occurred",
+            "experiencing high demand",
         ]
 
         if any(keyword in ai_reply for keyword in unsure_keywords):
