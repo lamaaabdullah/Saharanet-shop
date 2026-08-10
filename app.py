@@ -24,9 +24,9 @@ SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_KEY = os.getenv("SUPABASE_KEY")
 PDF_PATH = os.getenv("PDF_PATH", "knowledge_base.pdf")
 
-# استخدام نموذج gemini-1.5-flash المعتمد والمتاح
 if GEMINI_KEY:
     genai.configure(api_key=GEMINI_KEY)
+    # استخدام gemini-1.5-flash للتوافقية العالية وملاءمة الحصة المجانية
     model = genai.GenerativeModel("gemini-1.5-flash")
 else:
     model = None
@@ -52,7 +52,7 @@ def read_pdf_text(path: str) -> str:
         return ""
 
 
-def split_into_chunks(text: str, chunk_size: int = 2000) -> list[str]:
+def split_into_chunks(text: str, chunk_size: int = 2000) -> list:
     chunks = []
     for i in range(0, len(text), chunk_size):
         chunk = text[i : i + chunk_size].strip()
@@ -84,20 +84,20 @@ def get_words(text: str) -> set:
 
 
 def find_relevant_chunks(user_message: str, top_n: int = 3) -> list:
-    question_words = get_words(user_message)
+    try:
+        question_words = get_words(user_message)
+        scored_chunks = []
+        for chunk in pdf_chunks:
+            chunk_words = get_words(chunk)
+            overlap_count = len(question_words & chunk_words)
+            scored_chunks.append((overlap_count, chunk))
 
-    scored_chunks = []
-    for chunk in pdf_chunks:
-        chunk_words = get_words(chunk)
-        overlap_count = len(question_words & chunk_words)
-        scored_chunks.append((overlap_count, chunk))
-
-    scored_chunks.sort(key=lambda item: item[0], reverse=True)
-    return scored_chunks[:top_n]
-
-
-def pair_sort_key(pair):
-    return pair[0]
+        # الفرز بطريقة آمنة لتفادي أخطاء النوع والوظائف
+        scored_chunks.sort(key=lambda item: item[0], reverse=True)
+        return scored_chunks[:top_n]
+    except Exception as e:
+        logging.error(f"Error in find_relevant_chunks: {e}")
+        return [(0, chunk) for chunk in pdf_chunks[:top_n]]
 
 
 SMALL_TALK_WORDS = {
@@ -194,6 +194,7 @@ Rules:
         response = model.generate_content(prompt)
         return response.text.strip()
     except Exception as e:
+        # طباعة الخطأ كاملاً لمعرفة السبب في السجلات فوراً
         logging.error(f"GEMINI ERROR DETAILS:\n{traceback.format_exc()}")
         return "UNSURE: An error occurred while generating the answer."
 
@@ -359,7 +360,7 @@ def chat():
         best_score = top_chunks[0][0] if top_chunks else 0
 
         # Step C: Out-Of-Scope Guard
-        if best_score == 0:
+        if best_score == 0 and len(pdf_chunks) > 0:
             ai_reply = (
                 "I can only help with questions about Sahara Net's services, "
                 "plans, billing, and support. Please ask something related to "
