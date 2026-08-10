@@ -10,7 +10,7 @@ from pypdf import PdfReader
 import requests
 
 # =========================================================
-# SETUP
+# SETUP & CONFIGURATION
 # =========================================================
 
 load_dotenv()
@@ -31,7 +31,7 @@ CORS(app)
 
 
 # =========================================================
-# STEP 1: READ PDF
+# STEP 1: READ PDF & SPLIT INTO CHUNKS
 # =========================================================
 
 
@@ -40,7 +40,7 @@ def read_pdf_text(path: str) -> str:
         reader = PdfReader(path)
         full_text = ""
         for page in reader.pages:
-            full_text = full_text + page.extract_text()
+            full_text += page.extract_text() or ""
         return full_text
     except Exception as e:
         print(f"Error reading PDF: {e}")
@@ -60,10 +60,7 @@ try:
     pdf_text = read_pdf_text(PDF_PATH)
     pdf_chunks = split_into_chunks(pdf_text)
     print(
-        "PDF loaded. Characters:",
-        len(pdf_text),
-        "| Chunks:",
-        len(pdf_chunks),
+        f"PDF loaded successfully. Characters: {len(pdf_text)} | Chunks: {len(pdf_chunks)}"
     )
 except Exception as e:
     print(f"Warning: Could not load PDF on startup: {e}")
@@ -72,7 +69,7 @@ except Exception as e:
 
 
 # =========================================================
-# STEP 2: HELPER FUNCTIONS & SMALL TALK
+# STEP 2: HELPER FUNCTIONS & SMALL TALK DETECTION
 # =========================================================
 
 
@@ -163,14 +160,14 @@ Reply warmly in 1-2 short sentences in the SAME language.
 
 
 # =========================================================
-# STEP 3: ANSWER QUESTION
+# STEP 3: ANSWER QUESTION VIA GEMINI
 # =========================================================
 
 
 def answer_question(user_message: str, context_text: str) -> str:
     try:
         if not model:
-            return "UNSURE: I am currently unable to process complex answers."
+            return "UNSURE: Model not initialized."
 
         prompt = f"""
 You are a warm, helpful support assistant for Sahara Net.
@@ -188,12 +185,12 @@ Rules:
         response = model.generate_content(prompt)
         return response.text.strip()
     except Exception as e:
-        print(f"Error in answer_question: {e}")
+        print(f"GEMINI ERROR DETAILS: {e}")
         return "UNSURE: An error occurred while generating the answer."
 
 
 # =========================================================
-# STEP 3b: CREATE SUPPORT TICKET
+# STEP 3b: CREATE SUPPORT TICKET IN SUPABASE
 # =========================================================
 
 
@@ -225,16 +222,14 @@ def create_support_ticket(
             "status": "open",
             "created_date": now,
             "updated_date": now,
+            "customer_id": customer_id if customer_id else "GUEST",
+            "admin": admin_id,
             "phone": "",
             "contact_email": "",
         }
 
-        if customer_id:
-            data["customer_id"] = customer_id
-        if admin_id:
-            data["admin"] = admin_id
-
-        response = requests.post(url, headers=headers, json=data, timeout=5)
+        response = requests.post(url, headers=headers, json=data, timeout=10)
+        print("Ticket Creation Response:", response.status_code, response.text)
         return response.status_code in [200, 201]
     except Exception as e:
         print("Error creating support ticket:", str(e))
@@ -274,7 +269,7 @@ def classify_category(user_message: str) -> str:
 
 
 # =========================================================
-# STEP 5: SAVE CHAT LOG (SAFE EXECUTION)
+# STEP 5: SAVE CHAT LOG TO SUPABASE
 # =========================================================
 
 
@@ -302,7 +297,7 @@ def save_chat_log(
         if customer_id:
             data["customer_id"] = customer_id
 
-        requests.post(url, headers=headers, json=data, timeout=3)
+        requests.post(url, headers=headers, json=data, timeout=5)
     except Exception as e:
         print(f"Failed to save chat log: {e}")
 
@@ -334,7 +329,7 @@ def chat():
         if not user_message:
             return jsonify({"error": "message is required"}), 400
 
-        # Step A: Small talk
+        # Step A: Handle Small Talk
         if is_small_talk(user_message):
             ai_reply = answer_small_talk(user_message)
             category = "General"
@@ -349,11 +344,11 @@ def chat():
                 }
             )
 
-        # Step B: Match chunks
+        # Step B: Match Relevant PDF Chunks
         top_chunks = find_relevant_chunks(user_message)
         best_score = top_chunks[0][0] if top_chunks else 0
 
-        # Step C: Out of scope
+        # Step C: Out-Of-Scope Guard
         if best_score == 0:
             ai_reply = (
                 "I can only help with questions about Sahara Net's services, "
@@ -372,12 +367,12 @@ def chat():
                 }
             )
 
-        # Step D: Answer using context
+        # Step D: Generate Answer using PDF Context
         context_text = "\n\n---\n\n".join(chunk for score, chunk in top_chunks)
         ai_reply = answer_question(user_message, context_text)
         category = classify_category(user_message)
 
-        # Step E: Handle UNSURE keywords
+        # Step E: Trigger Support Ticket if Unsure
         ticket_created = False
         unsure_keywords = [
             "UNSURE:",
@@ -388,6 +383,7 @@ def chat():
             "غير متاكد",
             "تواصل مع الدعم",
             "سيتابع معك",
+            "An error occurred",
         ]
 
         if any(keyword in ai_reply for keyword in unsure_keywords):
@@ -396,7 +392,7 @@ def chat():
                 customer_id, user_message, clean_reply
             )
 
-        # Step F: Save log
+        # Step F: Save Chat Log
         save_chat_log(
             session_id, user_message, ai_reply, category, customer_id
         )
@@ -411,7 +407,16 @@ def chat():
 
     except Exception as e:
         print(f"Unhandled Error in /chat route: {e}")
-        return jsonify({"reply": "Hello! How can I assist you today?"}), 200
+        return (
+            jsonify(
+                {
+                    "reply": "An issue occurred while processing your request. A support log has been generated.",
+                    "category": "General",
+                    "ticket_created": False,
+                }
+            ),
+            200,
+        )
 
 
 if __name__ == "__main__":
