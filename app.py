@@ -17,7 +17,6 @@ import requests
 
 load_dotenv()
 
-# إعداد الـ Logging للتشخيص عبر Render
 logging.basicConfig(level=logging.INFO)
 
 GEMINI_KEY = os.getenv("GEMINI_KEY")
@@ -25,9 +24,11 @@ SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_KEY = os.getenv("SUPABASE_KEY")
 PDF_PATH = os.getenv("PDF_PATH", "knowledge_base.pdf")
 
+# استخدام نموذج gemini-1.5-flash المعتمد والمتاح
 if GEMINI_KEY:
     genai.configure(api_key=GEMINI_KEY)
-model = genai.GenerativeModel("gemini-2.5-flash")else:
+    model = genai.GenerativeModel("gemini-1.5-flash")
+else:
     model = None
 
 app = Flask(__name__)
@@ -91,8 +92,12 @@ def find_relevant_chunks(user_message: str, top_n: int = 3) -> list:
         overlap_count = len(question_words & chunk_words)
         scored_chunks.append((overlap_count, chunk))
 
-    scored_chunks.sort(key=lambda pair: pair[0], reverse=True)
+    scored_chunks.sort(key=pair_sort_key, reverse=True)
     return scored_chunks[:top_n]
+
+
+def pair_sort_key(pair):
+    return pair[0]
 
 
 SMALL_TALK_WORDS = {
