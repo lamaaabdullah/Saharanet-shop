@@ -315,18 +315,15 @@ def chat():
     ai_reply = answer_question(user_message, context_text)
     category = classify_category(user_message)
 
-    # Step E: NEW - check if the agent marked itself unsure, and if so,
-    # decide on its own to open a real support ticket
-    ticket_created = False
-    if (
-        "UNSURE:" in ai_reply
-        or "فريق الدعم" in ai_reply
-        or "غير متأكد" in ai_reply
-    ):
-        clean_reply = ai_reply.replace("UNSURE:", "").strip()
-        ticket_created = create_support_ticket(
-            customer_id, user_message, clean_reply
-        )
+  # Step E: Handle UNSURE and ticket creation safely
+        ticket_created = False
+        if any(
+            k in ai_reply for k in ["UNSURE:", "فريق الدعم", "غير متأكد"]
+        ):
+            clean_reply = ai_reply.replace("UNSURE:", "").strip()
+            ticket_created = create_support_ticket(
+                customer_id, user_message, clean_reply
+            )
         
     # Step F: save the conversation either way
     save_chat_log(session_id, user_message, ai_reply, category, customer_id)
