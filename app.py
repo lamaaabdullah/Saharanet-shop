@@ -143,22 +143,30 @@ def is_small_talk(user_message: str) -> bool:
     return False
 
 
-def answer_small_talk(user_message: str) -> str:
+def answer_question(user_message: str, context_text: str) -> str:
     try:
         if not model:
-            return "Hello! How can I help you today with Sahara Net services?"
+            return "UNSURE: Model initialized error."
 
         prompt = f"""
-You are a warm, friendly customer support assistant for Sahara Net.
-The user sent a greeting or casual message: "{user_message}"
-Reply warmly in 1-2 short sentences in the SAME language.
+You are a warm, helpful support assistant for Sahara Net.
+Context:
+{context_text}
+
+User question: "{user_message}"
+
+Rules:
+- Answer using ONLY the information above.
+- Short and clear, 2-4 sentences max.
+- Reply in the SAME language used by the user.
+- If context is missing the answer, start reply with UNSURE:
 """
         response = model.generate_content(prompt)
         return response.text.strip()
     except Exception as e:
-        print(f"Error in answer_small_talk: {e}")
-        return "Hello! How can I help you today with Sahara Net services?"
-
+        print(f"GEMINI ERROR DETAILS: {e}")
+        # رسالة صديقة للمستخدم وتؤكد فتح التذكرة
+        return "UNSURE: I am unable to process this request right now, but our support team has been notified via a support ticket."
 
 # =========================================================
 # STEP 3: ANSWER QUESTION VIA GEMINI
