@@ -34,12 +34,6 @@ CORS(app)  # allows our website (a different domain) to call this API
 # =========================================================
 # STEP 1: READ THE PDF AND SPLIT IT INTO SMALL CHUNKS
 # =========================================================
-# Splitting the PDF into small chunks (instead of sending the WHOLE pdf
-# every time) lets us pick only the chunks that are actually relevant
-# to the question the user asked - this is called "Retrieval-Augmented
-# Generation" (RAG): we RETRIEVE the relevant text first, then GENERATE
-# the answer using only that text. This keeps answers grounded and
-# reduces hallucination.
 
 def read_pdf_text(path: str) -> str:
     reader = PdfReader(path)
@@ -66,11 +60,6 @@ print("PDF loaded. Characters:", len(pdf_text), "| Chunks:", len(pdf_chunks))
 # =========================================================
 # STEP 2: FIND THE CHUNKS THAT ACTUALLY MATCH THE QUESTION
 # =========================================================
-# Simple word-overlap matching (no embeddings/vector math - those need
-# extra libraries like numpy that weren't covered in the course). The
-# word pattern below matches BOTH English letters (a-z, A-Z) AND Arabic
-# letters (\u0600-\u06FF), so this works correctly for Arabic questions
-# too, not just English ones.
 
 def get_words(text: str) -> set:
     words = re.findall(r"[a-zA-Z\u0600-\u06FF]+", text.lower())
@@ -93,10 +82,6 @@ def find_relevant_chunks(user_message: str, top_n: int = 3) -> list:
 # =========================================================
 # STEP 2b: DETECT SMALL TALK (greetings, thanks, etc.)
 # =========================================================
-# Greetings and thank-yous don't share any words with our knowledge
-# base PDF, so without this check they'd wrongly get treated as
-# "out of scope". This handles them separately with a relaxed, warm
-# reply instead of the strict grounded rules.
 
 SMALL_TALK_WORDS = {
     "hi", "hello", "hey", "hiya", "yo",
@@ -141,14 +126,7 @@ mention you're happy to help with anything about Sahara Net's .
 # =========================================================
 # STEP 3: ANSWER THE QUESTION USING ONLY THE RELEVANT CHUNKS
 # =========================================================
-# Same idea as final_output() in the weather agent demo: take real data
-# (chunks of text instead of weather JSON) and ask Gemini to turn it
-# into a friendly, human-sounding answer, grounded strictly in that data.
-#
-# NEW: we also ask Gemini to self-report when it ISN'T confident, by
-# starting its reply with the word UNSURE:. We use that self-report in
-# the next step to decide whether the agent should take action on its
-# own (open a real support ticket) instead of just replying with text.
+
 
 def answer_question(user_message: str, context_text: str) -> str:
     prompt = f"""
@@ -182,14 +160,7 @@ Rules:
 # =========================================================
 # STEP 3b: TAKE ACTION - open a real support ticket
 # =========================================================
-# This is the piece that makes this more than "just a chatbot that
-# talks". When the agent judges that it can't confidently answer
-# something, it doesn't just say "I'm not sure" and stop - it DECIDES
-# on its own to take a real action: creating an actual support ticket
-# in the database so a human takes over. Nobody told the code "create a
-# ticket for THIS specific message" - the agent makes that call itself,
-# based on judging the confidence of its own answer. This is the
-# difference between generating text and taking action.
+
 
 def create_support_ticket(customer_id, user_message: str, ai_reply: str) -> bool:
     if not customer_id:
@@ -217,9 +188,7 @@ def create_support_ticket(customer_id, user_message: str, ai_reply: str) -> bool
 # =========================================================
 # STEP 4: CLASSIFY THE QUESTION (same pattern as the routing agent)
 # =========================================================
-# These categories match the real Sahara Net knowledgebase categories.
-# Add or remove categories here anytime - classify_category() always
-# reads from this same list, so you only need to edit it in one place.
+
 
 CATEGORIES = [
     "Shared Hosting Linux",
@@ -249,18 +218,13 @@ Message: "{user_message}"
     response = model.generate_content(prompt)
     category = response.text.strip()
 
-    # Safety net: if Gemini returns something not in our list (typo,
-    # extra words, etc.), fall back to "General" instead of saving a
-    # category that won't match anything in the admin reports chart.
     return category if category in CATEGORIES else "General"
 
 
 # =========================================================
 # STEP 5: SAVE THE CONVERSATION TO THE DATABASE
 # =========================================================
-# requests.post, same idea as the weather agent's requests.get - just
-# talking to a REST API, except this time it's Supabase's API instead
-# of OpenWeatherMap's.
+
 
 def save_chat_log(session_id, user_message, ai_reply, category, customer_id) -> None:
     url = f"{SUPABASE_URL}/rest/v1/ai_chat_logs"
