@@ -20,10 +20,10 @@ SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_KEY = os.getenv("SUPABASE_KEY")
 PDF_PATH = os.getenv("PDF_PATH", "knowledge_base.pdf")
 
-# Use gemini-1.5-flash to resolve quota issues
+# Use gemini-2.0-flash to resolve quota issues
 if GEMINI_KEY:
     genai.configure(api_key=GEMINI_KEY)
-    model = genai.GenerativeModel("gemini-1.5-flash")
+   model = genai.GenerativeModel("gemini-2.0-flash")
 else:
     model = None
 
