@@ -92,7 +92,7 @@ def find_relevant_chunks(user_message: str, top_n: int = 3) -> list:
         overlap_count = len(question_words & chunk_words)
         scored_chunks.append((overlap_count, chunk))
 
-    scored_chunks.sort(key=pair_sort_key, reverse=True)
+    scored_chunks.sort(key=lambda item: item[0], reverse=True)
     return scored_chunks[:top_n]
 
 
