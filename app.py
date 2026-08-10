@@ -17,6 +17,7 @@ import requests
 
 load_dotenv()
 
+# إعداد الـ Logging لرؤية جميع التفاصيل في Render Logs
 logging.basicConfig(level=logging.INFO)
 
 GEMINI_KEY = os.getenv("GEMINI_KEY")
@@ -26,7 +27,7 @@ PDF_PATH = os.getenv("PDF_PATH", "knowledge_base.pdf")
 
 if GEMINI_KEY:
     genai.configure(api_key=GEMINI_KEY)
-    # استخدام gemini-1.5-flash للتوافقية العالية وملاءمة الحصة المجانية
+    # استخدام gemini-1.5-flash لضمان أعلى توافقية واستقرار
     model = genai.GenerativeModel("gemini-1.5-flash")
 else:
     model = None
@@ -92,7 +93,7 @@ def find_relevant_chunks(user_message: str, top_n: int = 3) -> list:
             overlap_count = len(question_words & chunk_words)
             scored_chunks.append((overlap_count, chunk))
 
-        # الفرز بطريقة آمنة لتفادي أخطاء النوع والوظائف
+        # الفرز بطريقة آمنة
         scored_chunks.sort(key=lambda item: item[0], reverse=True)
         return scored_chunks[:top_n]
     except Exception as e:
@@ -178,23 +179,31 @@ def answer_question(user_message: str, context_text: str) -> str:
         if not model:
             return "UNSURE: Model not initialized."
 
+        # تنظيف وقص النصوص الطويلة جداً لضمان عدم حدوث خطأ في API
+        clean_context = context_text[:4000].strip()
+
         prompt = f"""
 You are a warm, helpful support assistant for Sahara Net.
-Context:
-{context_text}
 
-User question: "{user_message}"
+Context Information:
+{clean_context}
+
+User Question: "{user_message}"
 
 Rules:
-- Answer using ONLY the information above.
-- Short and clear, 2-4 sentences max.
+- Answer using ONLY the information provided in the context above.
+- Be clear and concise (2-4 sentences max).
 - Reply in the SAME language used by the user.
-- If context is missing the answer, start reply with UNSURE:
+- If the context does not contain enough information to answer, start your reply with 'UNSURE:'.
 """
         response = model.generate_content(prompt)
-        return response.text.strip()
+
+        if response and hasattr(response, "text") and response.text:
+            return response.text.strip()
+        else:
+            return "UNSURE: No response generated."
+
     except Exception as e:
-        # طباعة الخطأ كاملاً لمعرفة السبب في السجلات فوراً
         logging.error(f"GEMINI ERROR DETAILS:\n{traceback.format_exc()}")
         return "UNSURE: An error occurred while generating the answer."
 
@@ -379,7 +388,10 @@ def chat():
             )
 
         # Step D: Generate Answer using PDF Context
-        context_text = "\n\n---\n\n".join(chunk for score, chunk in top_chunks)
+        context_text = "\n---\n".join(chunk for score, chunk in top_chunks if score > 0)
+        if not context_text:
+            context_text = "\n---\n".join(chunk for score, chunk in top_chunks)
+
         ai_reply = answer_question(user_message, context_text)
         category = classify_category(user_message)
 
