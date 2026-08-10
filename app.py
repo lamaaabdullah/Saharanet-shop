@@ -17,18 +17,15 @@ import requests
 
 load_dotenv()
 
-logging.basicConfig(level=logging.INFO)
 
 GEMINI_KEY = os.getenv("GEMINI_KEY")
 SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_KEY = os.getenv("SUPABASE_KEY")
 PDF_PATH = os.getenv("PDF_PATH", "knowledge_base.pdf")
 
-if GEMINI_KEY:
     genai.configure(api_key=GEMINI_KEY)
     model = genai.GenerativeModel("gemini-2.0-flash")
-else:
-    model = None
+
 
 app = Flask(__name__)
 CORS(app)
@@ -37,18 +34,12 @@ CORS(app)
 # =========================================================
 # STEP 1: READ PDF & SPLIT INTO CHUNKS
 # =========================================================
-
-
 def read_pdf_text(path: str) -> str:
-    try:
-        reader = PdfReader(path)
-        full_text = ""
-        for page in reader.pages:
-            full_text += page.extract_text() or ""
-        return full_text
-    except Exception as e:
-        logging.error(f"Error reading PDF: {e}")
-        return ""
+    reader = PdfReader(path)
+    full_text = ""
+    for page in reader.pages:
+        full_text = full_text + page.extract_text()
+    return full_text
 
 
 def split_into_chunks(text: str, chunk_size: int = 2000) -> list:
