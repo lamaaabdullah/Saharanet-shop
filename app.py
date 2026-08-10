@@ -27,8 +27,7 @@ PDF_PATH = os.getenv("PDF_PATH", "knowledge_base.pdf")
 
 if GEMINI_KEY:
     genai.configure(api_key=GEMINI_KEY)
-    model = genai.GenerativeModel("gemini-2.0-flash")
-else:
+model = genai.GenerativeModel("gemini-2.5-flash")else:
     model = None
 
 app = Flask(__name__)
