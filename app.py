@@ -8,6 +8,8 @@ from flask_cors import CORS
 import google.generativeai as genai
 from pypdf import PdfReader
 import requests
+import traceback
+import logging
 
 # =========================================================
 # SETUP & CONFIGURATION
@@ -189,11 +191,34 @@ Rules:
         print(f"GEMINI ERROR DETAILS: {e}")
         return "UNSURE: An error occurred while generating the answer."
 
-
+#+more
+def check_support_intent(user_message, llm_client):
+    prompt = f"""
+    Analyze the following user query. Determine if the user explicitly wants to open a support ticket or contact human customer support.
+    Respond with ONLY a JSON object: {{"needs_ticket": true/false, "reason": "brief summary"}}
+    
+    User Query: "{user_message}"
+    """
+    
+    # استدعاء Gemini API
+    response = llm_client.generate_content(prompt)
+    # معالجة النتيجة مباشرة بدون قوائم كلمات معقدة
 # =========================================================
 # STEP 3b: CREATE SUPPORT TICKET IN SUPABASE
 # =========================================================
+# إعداد الـ Logs لرؤية التفاصيل في Render/Terminal
+logging.basicConfig(level=logging.INFO)
 
+try:
+    # الكود الخاص بمعالجة المحادثة أو الاتصال بالخدمات
+    pass
+except Exception as e:
+    # طباعة التفاصيل الكاملة للخطأ في الـ Terminal/Render Logs
+    logging.error(f"Real Error Detailed Traceback:\n{traceback.format_exc()}")
+    
+    # إرجاع تفاصيل الخطأ للـ Frontend للتشخيص بدلاً من الرسالة المبهمة
+    return {"status": "error", "message": str(e)}, 500
+    #End
 
 def create_support_ticket(
     customer_id,
