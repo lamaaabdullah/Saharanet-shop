@@ -165,7 +165,7 @@ Rules:
 def create_support_ticket(
     customer_id, user_message: str, ai_reply: str
 ) -> bool:
-    # 1. رفض العملية إذا لم يكن العميل مسجل دخول
+    
     if not customer_id:
         return False
 
@@ -178,21 +178,23 @@ def create_support_ticket(
 
     now = datetime.utcnow().isoformat()
 
-    # 2. إرسال البيانات بأسماء الأعمدة المطابقة تماماً لجدولك
+    # 2
     data = {
+        "support_id": support_id",
         "title": "طلب دعم فني تلقائي من البوت",
         "content": f"سؤال العميل: {user_message}\n\nرد البوت: {ai_reply}",
         "status": "open",
-        "customer_id": customer_id,
         "created_date": now,
         "updated_date": now,
+        "customer_id": customer_id,
+        "admin": admin_id,
         "phone": "",  # إرسال نص فارغ لتفادي خطأ NOT NULL
         "contact_email": "",  # إرسال نص فارغ لتفادي خطأ NOT NULL
     }
 
     response = requests.post(url, headers=headers, json=data)
 
-    # طباعة استجابة Supabase في الشاشة للتحقق (Debug)
+   
     print("Supabase Status:", response.status_code)
     print("Supabase Response:", response.text)
 
