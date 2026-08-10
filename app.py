@@ -223,7 +223,7 @@ def create_support_ticket(
             "created_date": now,
             "updated_date": now,
             "customer_id": customer_id if customer_id else "GUEST",
-            "admin": admin_id,
+            ""admin_id": admin_id,
             "phone": "",
             "contact_email": "",
         }
