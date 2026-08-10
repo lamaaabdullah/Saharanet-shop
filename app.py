@@ -20,10 +20,10 @@ SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_KEY = os.getenv("SUPABASE_KEY")
 PDF_PATH = os.getenv("PDF_PATH", "knowledge_base.pdf")
 
-# Use gemini-2.0-flash to resolve quota issues
+# Line 26 setup safely initialized
 if GEMINI_KEY:
     genai.configure(api_key=GEMINI_KEY)
-   model = genai.GenerativeModel("gemini-2.0-flash")
+    model = genai.GenerativeModel("gemini-2.0-flash")
 else:
     model = None
 
@@ -143,30 +143,22 @@ def is_small_talk(user_message: str) -> bool:
     return False
 
 
-def answer_question(user_message: str, context_text: str) -> str:
+def answer_small_talk(user_message: str) -> str:
     try:
         if not model:
-            return "UNSURE: Model initialized error."
+            return "Hello! How can I help you today with Sahara Net services?"
 
         prompt = f"""
-You are a warm, helpful support assistant for Sahara Net.
-Context:
-{context_text}
-
-User question: "{user_message}"
-
-Rules:
-- Answer using ONLY the information above.
-- Short and clear, 2-4 sentences max.
-- Reply in the SAME language used by the user.
-- If context is missing the answer, start reply with UNSURE:
+You are a warm, friendly customer support assistant for Sahara Net.
+The user sent a greeting or casual message: "{user_message}"
+Reply warmly in 1-2 short sentences in the SAME language.
 """
         response = model.generate_content(prompt)
         return response.text.strip()
     except Exception as e:
-        print(f"GEMINI ERROR DETAILS: {e}")
-        # رسالة صديقة للمستخدم وتؤكد فتح التذكرة
-        return "UNSURE: I am unable to process this request right now, but our support team has been notified via a support ticket."
+        print(f"Error in answer_small_talk: {e}")
+        return "Hello! How can I help you today with Sahara Net services?"
+
 
 # =========================================================
 # STEP 3: ANSWER QUESTION VIA GEMINI
@@ -208,12 +200,8 @@ def create_support_ticket(
     user_message: str,
     ai_reply: str,
     admin_id=None,
-    support_id=None,
 ) -> bool:
     try:
-        if not support_id:
-            support_id = str(uuid.uuid4())
-
         url = f"{SUPABASE_URL}/rest/v1/support_logs"
         headers = {
             "apikey": SUPABASE_KEY,
@@ -225,20 +213,20 @@ def create_support_ticket(
         now = datetime.utcnow().isoformat()
 
         data = {
-            "support_id": support_id,
             "title": "Automated Support Request from Bot",
             "content": f"Customer Question: {user_message}\n\nBot Reply: {ai_reply}",
             "status": "open",
             "created_date": now,
             "updated_date": now,
-            "customer_id": customer_id if customer_id else "GUEST",
             "phone": "",
             "contact_email": "",
         }
 
-        # Send admin field only if provided to avoid payload mismatch
-        if admin_id:
-            data["admin"] = admin_id
+        if customer_id and str(customer_id).isdigit():
+            data["customer_id"] = int(customer_id)
+
+        if admin_id and str(admin_id).isdigit():
+            data["admin_id"] = int(admin_id)
 
         response = requests.post(url, headers=headers, json=data, timeout=10)
         print("Ticket Creation Response:", response.status_code, response.text)
@@ -422,7 +410,7 @@ def chat():
         return (
             jsonify(
                 {
-                    "reply": "An issue occurred while processing your request. A support log has been generated.",
+                    "reply": "An issue occurred while processing your request.",
                     "category": "General",
                     "ticket_created": False,
                 }
