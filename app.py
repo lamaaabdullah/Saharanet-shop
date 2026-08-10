@@ -7,6 +7,7 @@ import google.generativeai as genai
 from pypdf import PdfReader
 import requests
 from datetime import datetime
+import uuid
 # =========================================================
 # SETUP
 # =========================================================
@@ -163,44 +164,53 @@ Rules:
 
 
 def create_support_ticket(
-    customer_id, user_message: str, ai_reply: str
+    customer_id,
+    user_message: str,
+    ai_reply: str,
+    admin_id=None,
+    support_id=None,
 ) -> bool:
-    
+
     if not customer_id:
         return False
+
+    # Generate a unique support_id if one was not provided
+    if not support_id:
+        support_id = str(uuid.uuid4())
 
     url = f"{SUPABASE_URL}/rest/v1/support_logs"
     headers = {
         "apikey": SUPABASE_KEY,
         "Authorization": f"Bearer {SUPABASE_KEY}",
         "Content-Type": "application/json",
+        "Prefer": "return=minimal",
     }
 
     now = datetime.utcnow().isoformat()
 
-    # 2
     data = {
-        "support_id": support_id",
-        "title": "طلب دعم فني تلقائي من البوت",
-        "content": f"سؤال العميل: {user_message}\n\nرد البوت: {ai_reply}",
+        "support_id": support_id,  # Fixed syntax error (removed extra quotation mark)
+        "title": "Automated Support Request from Bot",
+        "content": f"Customer Question: {user_message}\n\nBot Reply: {ai_reply}",
         "status": "open",
         "created_date": now,
         "updated_date": now,
         "customer_id": customer_id,
         "admin": admin_id,
-        "phone": "",  # إرسال نص فارغ لتفادي خطأ NOT NULL
-        "contact_email": "",  # إرسال نص فارغ لتفادي خطأ NOT NULL
+        "phone": "",  # Empty string to avoid NOT NULL error
+        "contact_email": "",  # Empty string to avoid NOT NULL error
     }
 
-    response = requests.post(url, headers=headers, json=data)
+    try:
+        response = requests.post(url, headers=headers, json=data)
 
-   
-    print("Supabase Status:", response.status_code)
-    print("Supabase Response:", response.text)
+        print("Supabase Status:", response.status_code)
+        print("Supabase Response:", response.text)
 
-    return response.status_code in [200, 201]
-
-
+        return response.status_code in [200, 201]
+    except Exception as e:
+        print("Error creating support ticket:", str(e))
+        return False
 # =========================================================
 # STEP 4: CLASSIFY THE QUESTION (same pattern as the routing agent)
 # =========================================================
