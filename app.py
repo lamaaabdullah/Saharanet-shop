@@ -20,9 +20,10 @@ SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_KEY = os.getenv("SUPABASE_KEY")
 PDF_PATH = os.getenv("PDF_PATH", "knowledge_base.pdf")
 
+# Use gemini-1.5-flash to resolve quota issues
 if GEMINI_KEY:
     genai.configure(api_key=GEMINI_KEY)
-    model = genai.GenerativeModel("gemini-2.5-flash")
+    model = genai.GenerativeModel("gemini-1.5-flash")
 else:
     model = None
 
@@ -223,10 +224,13 @@ def create_support_ticket(
             "created_date": now,
             "updated_date": now,
             "customer_id": customer_id if customer_id else "GUEST",
-            ""admin_id": admin_id,
             "phone": "",
             "contact_email": "",
         }
+
+        # Send admin field only if provided to avoid payload mismatch
+        if admin_id:
+            data["admin"] = admin_id
 
         response = requests.post(url, headers=headers, json=data, timeout=10)
         print("Ticket Creation Response:", response.status_code, response.text)
