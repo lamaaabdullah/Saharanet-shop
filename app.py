@@ -3,7 +3,6 @@ import re
 from flask import Flask, request, jsonify
 from flask_cors import CORS
 from dotenv import load_dotenv
-from sentence_transformers import SentenceTransformer, util
 import google.generativeai as genai
 from pypdf import PdfReader
 import requests
@@ -35,6 +34,12 @@ CORS(app)  # allows our website (a different domain) to call this API
 # =========================================================
 # STEP 1: READ THE PDF AND SPLIT IT INTO SMALL CHUNKS
 # =========================================================
+# Splitting the PDF into small chunks (instead of sending the WHOLE pdf
+# every time) lets us pick only the chunks that are actually relevant
+# to the question the user asked - this is called "Retrieval-Augmented
+# Generation" (RAG): we RETRIEVE the relevant text first, then GENERATE
+# the answer using only that text. This keeps answers grounded and
+# reduces hallucination.
 
 def read_pdf_text(path: str) -> str:
     reader = PdfReader(path)
@@ -61,85 +66,44 @@ print("PDF loaded. Characters:", len(pdf_text), "| Chunks:", len(pdf_chunks))
 # =========================================================
 # STEP 2: FIND THE CHUNKS THAT ACTUALLY MATCH THE QUESTION
 # =========================================================
-
-nltk.download("stopwords", quiet=True)
-AR_STOPWORDS = set(stopwords.words("arabic"))
-EN_STOPWORDS = set(stopwords.words("english"))
-ALL_STOPWORDS = AR_STOPWORDS.union(EN_STOPWORDS)
-
+# Simple word-overlap matching (no embeddings/vector math - those need
+# extra libraries like numpy that weren't covered in the course). The
+# word pattern below matches BOTH English letters (a-z, A-Z) AND Arabic
+# letters (\u0600-\u06FF), so this works correctly for Arabic questions
+# too, not just English ones.
 
 def get_words(text: str) -> set:
     words = re.findall(r"[a-zA-Z\u0600-\u06FF]+", text.lower())
-    return {
-        word for word in words if word not in ALL_STOPWORDS and len(word) > 1
-    }
+    return set(words)
 
 
-model = SentenceTransformer("paraphrase-multilingual-MiniLM-L12-v2")
+def find_relevant_chunks(user_message: str, top_n: int = 3) -> list:
+    question_words = get_words(user_message)
 
--
-def find_relevant_chunks_semantic(
-    user_message: str,
-    pdf_chunks: list[str],
-    chunk_embeddings=None,
-    top_n: int = 3,
-) -> list: )
-    if chunk_embeddings is None:
-        chunk_embeddings = model.encode(pdf_chunks, convert_to_tensor=True)
+    scored_chunks = []
+    for chunk in pdf_chunks:
+        chunk_words = get_words(chunk)
+        overlap_count = len(question_words & chunk_words)
+        scored_chunks.append((overlap_count, chunk))
 
-    query_embedding = model.encode(user_message, convert_to_tensor=True)
-    cosine_scores = util.cos_sim(query_embedding, chunk_embeddings)[0]
-    top_results = cosine_scores.argsort(descending=True)[:top_n]
+    scored_chunks.sort(key=lambda pair: pair[0], reverse=True)
+    return scored_chunks[:top_n]
 
-    results = []
-    for idx in top_results:
-        results.append((float(cosine_scores[idx]), pdf_chunks[idx]))
 
-    return results
 # =========================================================
 # STEP 2b: DETECT SMALL TALK (greetings, thanks, etc.)
 # =========================================================
+# Greetings and thank-yous don't share any words with our knowledge
+# base PDF, so without this check they'd wrongly get treated as
+# "out of scope". This handles them separately with a relaxed, warm
+# reply instead of the strict grounded rules.
 
 SMALL_TALK_WORDS = {
-    # English
-    "hi",
-    "hello",
-    "hey",
-    "hiya",
-    "yo",
-    "thanks",
-    "thank",
-    "thankyou",
-    "ok",
-    "okay",
-    "cool",
-    "great",
-    "nice",
-    "bye",
-    "goodbye",
-    "morning",
-    "evening",
-    # Arabic
-    "مرحبا",
-    "مرحباً",
-    "هلا",
-    "السلام",
-    "عليكم",
-    "وعليكم",
-    "شكرا",
-    "شكرًا",
-    "تمام",
-    "طيب",
-    "اوك",
-    "أوك",
-    "يعطيك",
-    "العافية",
-    "مساء",
-    "صباح",
-    "الخير",
-    "النور",
-    "أهلا",
-    "اهلا",
+    "hi", "hello", "hey", "hiya", "yo",
+    "thanks", "thank", "thankyou", "ok", "okay", "cool", "great", "nice",
+    "bye", "goodbye", "morning", "evening",
+    "مرحبا", "هلا", "السلام", "عليكم", "وعليكم", "شكرا", "شكرًا",
+    "تمام", "طيب", "اوك", "أوك", "يعطيك", "العافية", "مساء", "صباح", "الخير", "النور"
 }
 
 
@@ -147,51 +111,44 @@ def is_small_talk(user_message: str) -> bool:
     words = get_words(user_message)
     text = user_message.strip()
 
-    if not text:
-        return False
-
-    #1
     if len(words) <= 4 and len(words & SMALL_TALK_WORDS) > 0:
         return True
 
-    # 2.
-    if len(words) <= 2 and "?" not in text and "؟" not in text:
-        # التأكد من عدم وجود كلمات مفتاحية استعلامية شائعة
-        keywords = {
-            "أسعار",
-            "سعر",
-            "دعم",
-            "خدمة",
-            "باقة",
-            "فايبر",
-            "عروض",
-            "price",
-            "cost",
-            "support",
-        }
-        if not (words & keywords):
-            return True
+    # Short message, no question mark, in ANY language - safely catches
+    # greetings in languages we didn't hardcode a word list for.
+    if len(text) <= 15 and "?" not in text and "؟" not in text:
+        return True
 
     return False
 
 
 def answer_small_talk(user_message: str) -> str:
     prompt = f"""
-You are a warm, friendly customer support assistant for Sahara Net, a Saudi telecom and cloud services company. 
-The user just sent a casual message (a greeting, thanks, etc.), not a specific inquiry:
+You are a warm, friendly customer support assistant for Sahara Net, a
+Saudi telecom and cloud services company. The user just sent a casual
+message (a greeting, thanks, etc.), not a real question:
 
 "{user_message}"
 
-Reply warmly and naturally in 1-2 short sentences, in the EXACT same language the user used. 
-Let them know you're happy to assist them with any of Sahara Net's services
+Reply warmly and naturally in 1-2 short sentences, in the SAME language
+the user used (match their language exactly, whatever it is). You can
+mention you're happy to help with anything about Sahara Net's .
 """
     response = model.generate_content(prompt)
     return response.text.strip()
 
-    
+
 # =========================================================
 # STEP 3: ANSWER THE QUESTION USING ONLY THE RELEVANT CHUNKS
 # =========================================================
+# Same idea as final_output() in the weather agent demo: take real data
+# (chunks of text instead of weather JSON) and ask Gemini to turn it
+# into a friendly, human-sounding answer, grounded strictly in that data.
+#
+# NEW: we also ask Gemini to self-report when it ISN'T confident, by
+# starting its reply with the word UNSURE:. We use that self-report in
+# the next step to decide whether the agent should take action on its
+# own (open a real support ticket) instead of just replying with text.
 
 def answer_question(user_message: str, context_text: str) -> str:
     prompt = f"""
@@ -225,6 +182,14 @@ Rules:
 # =========================================================
 # STEP 3b: TAKE ACTION - open a real support ticket
 # =========================================================
+# This is the piece that makes this more than "just a chatbot that
+# talks". When the agent judges that it can't confidently answer
+# something, it doesn't just say "I'm not sure" and stop - it DECIDES
+# on its own to take a real action: creating an actual support ticket
+# in the database so a human takes over. Nobody told the code "create a
+# ticket for THIS specific message" - the agent makes that call itself,
+# based on judging the confidence of its own answer. This is the
+# difference between generating text and taking action.
 
 def create_support_ticket(customer_id, user_message: str, ai_reply: str) -> bool:
     if not customer_id:
@@ -252,7 +217,9 @@ def create_support_ticket(customer_id, user_message: str, ai_reply: str) -> bool
 # =========================================================
 # STEP 4: CLASSIFY THE QUESTION (same pattern as the routing agent)
 # =========================================================
-
+# These categories match the real Sahara Net knowledgebase categories.
+# Add or remove categories here anytime - classify_category() always
+# reads from this same list, so you only need to edit it in one place.
 
 CATEGORIES = [
     "Shared Hosting Linux",
@@ -281,13 +248,19 @@ Message: "{user_message}"
 """
     response = model.generate_content(prompt)
     category = response.text.strip()
+
+    # Safety net: if Gemini returns something not in our list (typo,
+    # extra words, etc.), fall back to "General" instead of saving a
+    # category that won't match anything in the admin reports chart.
     return category if category in CATEGORIES else "General"
 
 
 # =========================================================
 # STEP 5: SAVE THE CONVERSATION TO THE DATABASE
 # =========================================================
-
+# requests.post, same idea as the weather agent's requests.get - just
+# talking to a REST API, except this time it's Supabase's API instead
+# of OpenWeatherMap's.
 
 def save_chat_log(session_id, user_message, ai_reply, category, customer_id) -> None:
     url = f"{SUPABASE_URL}/rest/v1/ai_chat_logs"
