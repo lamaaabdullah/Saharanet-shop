@@ -1,6 +1,8 @@
 from datetime import datetime
+import logging
 import os
 import re
+import traceback
 import uuid
 from dotenv import load_dotenv
 from flask import Flask, jsonify, request
@@ -8,8 +10,6 @@ from flask_cors import CORS
 import google.generativeai as genai
 from pypdf import PdfReader
 import requests
-import traceback
-import logging
 
 # =========================================================
 # SETUP & CONFIGURATION
@@ -17,12 +17,14 @@ import logging
 
 load_dotenv()
 
+# إعداد الـ Logging للتشخيص عبر Render
+logging.basicConfig(level=logging.INFO)
+
 GEMINI_KEY = os.getenv("GEMINI_KEY")
 SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_KEY = os.getenv("SUPABASE_KEY")
 PDF_PATH = os.getenv("PDF_PATH", "knowledge_base.pdf")
 
-# Line 26 setup safely initialized
 if GEMINI_KEY:
     genai.configure(api_key=GEMINI_KEY)
     model = genai.GenerativeModel("gemini-2.0-flash")
@@ -46,7 +48,7 @@ def read_pdf_text(path: str) -> str:
             full_text += page.extract_text() or ""
         return full_text
     except Exception as e:
-        print(f"Error reading PDF: {e}")
+        logging.error(f"Error reading PDF: {e}")
         return ""
 
 
@@ -62,11 +64,11 @@ def split_into_chunks(text: str, chunk_size: int = 2000) -> list[str]:
 try:
     pdf_text = read_pdf_text(PDF_PATH)
     pdf_chunks = split_into_chunks(pdf_text)
-    print(
+    logging.info(
         f"PDF loaded successfully. Characters: {len(pdf_text)} | Chunks: {len(pdf_chunks)}"
     )
 except Exception as e:
-    print(f"Warning: Could not load PDF on startup: {e}")
+    logging.warning(f"Could not load PDF on startup: {e}")
     pdf_text = ""
     pdf_chunks = []
 
@@ -158,7 +160,7 @@ Reply warmly in 1-2 short sentences in the SAME language.
         response = model.generate_content(prompt)
         return response.text.strip()
     except Exception as e:
-        print(f"Error in answer_small_talk: {e}")
+        logging.error(f"Error in answer_small_talk: {e}")
         return "Hello! How can I help you today with Sahara Net services?"
 
 
@@ -188,37 +190,14 @@ Rules:
         response = model.generate_content(prompt)
         return response.text.strip()
     except Exception as e:
-        print(f"GEMINI ERROR DETAILS: {e}")
+        logging.error(f"GEMINI ERROR DETAILS:\n{traceback.format_exc()}")
         return "UNSURE: An error occurred while generating the answer."
 
-#+more
-def check_support_intent(user_message, llm_client):
-    prompt = f"""
-    Analyze the following user query. Determine if the user explicitly wants to open a support ticket or contact human customer support.
-    Respond with ONLY a JSON object: {{"needs_ticket": true/false, "reason": "brief summary"}}
-    
-    User Query: "{user_message}"
-    """
-    
-    # استدعاء Gemini API
-    response = llm_client.generate_content(prompt)
-    # معالجة النتيجة مباشرة بدون قوائم كلمات معقدة
+
 # =========================================================
 # STEP 3b: CREATE SUPPORT TICKET IN SUPABASE
 # =========================================================
-# إعداد الـ Logs لرؤية التفاصيل في Render/Terminal
-logging.basicConfig(level=logging.INFO)
 
-try:
-    # الكود الخاص بمعالجة المحادثة أو الاتصال بالخدمات
-    pass
-except Exception as e:
-    # طباعة التفاصيل الكاملة للخطأ في الـ Terminal/Render Logs
-    logging.error(f"Real Error Detailed Traceback:\n{traceback.format_exc()}")
-    
-    # إرجاع تفاصيل الخطأ للـ Frontend للتشخيص بدلاً من الرسالة المبهمة
-    return {"status": "error", "message": str(e)}, 500
-    #End
 
 def create_support_ticket(
     customer_id,
@@ -254,10 +233,12 @@ def create_support_ticket(
             data["admin_id"] = int(admin_id)
 
         response = requests.post(url, headers=headers, json=data, timeout=10)
-        print("Ticket Creation Response:", response.status_code, response.text)
+        logging.info(
+            f"Ticket Creation Status: {response.status_code} | Body: {response.text}"
+        )
         return response.status_code in [200, 201]
     except Exception as e:
-        print("Error creating support ticket:", str(e))
+        logging.error(f"Error creating support ticket:\n{traceback.format_exc()}")
         return False
 
 
@@ -324,7 +305,7 @@ def save_chat_log(
 
         requests.post(url, headers=headers, json=data, timeout=5)
     except Exception as e:
-        print(f"Failed to save chat log: {e}")
+        logging.error(f"Failed to save chat log:\n{traceback.format_exc()}")
 
 
 # =========================================================
@@ -431,7 +412,7 @@ def chat():
         )
 
     except Exception as e:
-        print(f"Unhandled Error in /chat route: {e}")
+        logging.error(f"Unhandled Error in /chat route:\n{traceback.format_exc()}")
         return (
             jsonify(
                 {
@@ -440,7 +421,7 @@ def chat():
                     "ticket_created": False,
                 }
             ),
-            200,
+            500,
         )
 
 
