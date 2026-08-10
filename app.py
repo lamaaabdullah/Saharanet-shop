@@ -17,7 +17,6 @@ import requests
 
 load_dotenv()
 
-# إعداد الـ Logging لرؤية جميع التفاصيل في Render Logs
 logging.basicConfig(level=logging.INFO)
 
 GEMINI_KEY = os.getenv("GEMINI_KEY")
@@ -27,7 +26,7 @@ PDF_PATH = os.getenv("PDF_PATH", "knowledge_base.pdf")
 
 if GEMINI_KEY:
     genai.configure(api_key=GEMINI_KEY)
-model = genai.GenerativeModel("gemini-2.0-flash")
+    model = genai.GenerativeModel("gemini-2.0-flash")
 else:
     model = None
 
@@ -92,7 +91,6 @@ def find_relevant_chunks(user_message: str, top_n: int = 3) -> list:
             overlap_count = len(question_words & chunk_words)
             scored_chunks.append((overlap_count, chunk))
 
-        # الفرز بطريقة آمنة
         scored_chunks.sort(key=lambda item: item[0], reverse=True)
         return scored_chunks[:top_n]
     except Exception as e:
@@ -178,7 +176,6 @@ def answer_question(user_message: str, context_text: str) -> str:
         if not model:
             return "UNSURE: Model not initialized."
 
-        # تنظيف وقص النصوص الطويلة جداً لضمان عدم حدوث خطأ في API
         clean_context = context_text[:4000].strip()
 
         prompt = f"""
