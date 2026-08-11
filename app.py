@@ -1,91 +1,60 @@
-from datetime import datetime
-import logging
 import os
 import re
-import traceback
 import uuid
-from dotenv import load_dotenv
-from flask import Flask, jsonify, request
+from flask import Flask, request, jsonify
 from flask_cors import CORS
+from dotenv import load_dotenv
 import google.generativeai as genai
-from google.api_core.exceptions import ResourceExhausted
 from pypdf import PdfReader
 import requests
 
 # =========================================================
-# SETUP & CONFIGURATION
+# SETUP
 # =========================================================
 
 load_dotenv()
-
-logging.basicConfig(level=logging.INFO)
 
 GEMINI_KEY = os.getenv("GEMINI_KEY")
 SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_KEY = os.getenv("SUPABASE_KEY")
 PDF_PATH = os.getenv("PDF_PATH", "knowledge_base.pdf")
 
-# تهيئة النموذج بآمان
-model = None
-if GEMINI_KEY:
-    try:
-        genai.configure(api_key=GEMINI_KEY)
-        model = genai.GenerativeModel("gemini-2.0-flash")
-    except Exception as e:
-        logging.error(f"Failed to initialize Gemini Model: {e}")
+genai.configure(api_key=GEMINI_KEY)
+model = genai.GenerativeModel("gemini-2.5-flash")
 
 app = Flask(__name__)
 CORS(app)
 
 
 # =========================================================
-# STEP 1: READ PDF & SPLIT INTO CHUNKS (SAFE LOAD)
+# STEP 1: READ THE PDF AND SPLIT IT INTO SMALL CHUNKS
 # =========================================================
 
-
 def read_pdf_text(path: str) -> str:
-    if not os.path.exists(path):
-        logging.warning(f"PDF file not found at path: {path}")
-        return ""
-    try:
-        reader = PdfReader(path)
-        full_text = ""
-        for page in reader.pages:
-            full_text += page.extract_text() or ""
-        return full_text
-    except Exception as e:
-        logging.error(f"Error reading PDF: {e}")
-        return ""
+    reader = PdfReader(path)
+    full_text = ""
+    for page in reader.pages:
+        full_text = full_text + page.extract_text()
+    return full_text
 
 
-def split_into_chunks(text: str, chunk_size: int = 2000) -> list:
-    if not text:
-        return []
+def split_into_chunks(text: str, chunk_size: int = 600) -> list[str]:
     chunks = []
     for i in range(0, len(text), chunk_size):
-        chunk = text[i : i + chunk_size].strip()
+        chunk = text[i:i + chunk_size].strip()
         if chunk:
             chunks.append(chunk)
     return chunks
 
 
-# تحميل الملف بأمان عند الإقلاع بدون إسقاط السيرفر
-try:
-    pdf_text = read_pdf_text(PDF_PATH)
-    pdf_chunks = split_into_chunks(pdf_text)
-    logging.info(
-        f"PDF Loaded: {len(pdf_text)} chars | Chunks: {len(pdf_chunks)}"
-    )
-except Exception as e:
-    logging.error(f"Safe load PDF failed: {e}")
-    pdf_text = ""
-    pdf_chunks = []
+pdf_text = read_pdf_text(PDF_PATH)
+pdf_chunks = split_into_chunks(pdf_text)
+print("PDF loaded. Characters:", len(pdf_text), "| Chunks:", len(pdf_chunks))
 
 
 # =========================================================
-# STEP 2: HELPER FUNCTIONS & SMALL TALK DETECTION
+# STEP 2: FIND THE CHUNKS THAT ACTUALLY MATCH THE QUESTION
 # =========================================================
-
 
 def get_words(text: str) -> set:
     words = re.findall(r"[a-zA-Z\u0600-\u06FF]+", text.lower())
@@ -93,58 +62,26 @@ def get_words(text: str) -> set:
 
 
 def find_relevant_chunks(user_message: str, top_n: int = 3) -> list:
-    try:
-        if not pdf_chunks:
-            return []
-        question_words = get_words(user_message)
-        scored_chunks = []
-        for chunk in pdf_chunks:
-            chunk_words = get_words(chunk)
-            overlap_count = len(question_words & chunk_words)
-            scored_chunks.append((overlap_count, chunk))
+    question_words = get_words(user_message)
+    scored_chunks = []
+    for chunk in pdf_chunks:
+        chunk_words = get_words(chunk)
+        overlap_count = len(question_words & chunk_words)
+        scored_chunks.append((overlap_count, chunk))
+    scored_chunks.sort(key=lambda pair: pair[0], reverse=True)
+    return scored_chunks[:top_n]
 
-        scored_chunks.sort(key=lambda item: item[0], reverse=True)
-        return scored_chunks[:top_n]
-    except Exception as e:
-        logging.error(f"Error in find_relevant_chunks: {e}")
-        return [(0, chunk) for chunk in pdf_chunks[:top_n]]
 
+# =========================================================
+# STEP 2b: DETECT SMALL TALK
+# =========================================================
 
 SMALL_TALK_WORDS = {
-    "hi",
-    "hello",
-    "hey",
-    "hiya",
-    "yo",
-    "thanks",
-    "thank",
-    "thankyou",
-    "ok",
-    "okay",
-    "cool",
-    "great",
-    "nice",
-    "bye",
-    "goodbye",
-    "morning",
-    "evening",
-    "مرحبا",
-    "هلا",
-    "السلام",
-    "عليكم",
-    "وعليكم",
-    "شكرا",
-    "شكرًا",
-    "تمام",
-    "طيب",
-    "اوك",
-    "أوك",
-    "يعطيك",
-    "العافية",
-    "مساء",
-    "صباح",
-    "الخير",
-    "النور",
+    "hi", "hello", "hey", "hiya", "yo",
+    "thanks", "thank", "thankyou", "ok", "okay", "cool", "great", "nice",
+    "bye", "goodbye", "morning", "evening",
+    "مرحبا", "هلا", "السلام", "عليكم", "وعليكم", "شكرا", "شكرًا",
+    "تمام", "طيب", "اوك", "أوك", "يعطيك", "العافية", "مساء", "صباح", "الخير", "النور"
 }
 
 
@@ -154,125 +91,97 @@ def is_small_talk(user_message: str) -> bool:
 
     if len(words) <= 4 and len(words & SMALL_TALK_WORDS) > 0:
         return True
-
     if len(text) <= 15 and "?" not in text and "؟" not in text:
         return True
-
     return False
 
 
 def answer_small_talk(user_message: str) -> str:
-    try:
-        if not model:
-            return "Hello! How can I help you today with Sahara Net services?"
+    prompt = f"""
+You are a warm, friendly customer support assistant for Sahara Net, a
+Saudi telecom and cloud services company. The user just sent a casual
+message (a greeting, thanks, etc.), not a real question:
 
-        prompt = f"""
-You are a warm, friendly customer support assistant for Sahara Net.
-The user sent a greeting or casual message: "{user_message}"
-Reply warmly in 1-2 short sentences in the SAME language.
+"{user_message}"
+
+Reply warmly and naturally in 1-2 short sentences, in the SAME language
+the user used. Mention you're happy to help with Sahara Net's services,
+billing, or support.
 """
-        response = model.generate_content(prompt)
-        return response.text.strip()
-    except ResourceExhausted:
-        logging.error("Gemini Quota Exceeded in SmallTalk.")
-        return "Hello! Welcome to Sahara Net support. How can I assist you today?"
-    except Exception as e:
-        logging.error(f"Error in answer_small_talk: {e}")
-        return "Hello! How can I help you today with Sahara Net services?"
+    response = model.generate_content(prompt)
+    return response.text.strip()
 
 
 # =========================================================
-# STEP 3: ANSWER QUESTION VIA GEMINI (WITH FALLBACK)
+# STEP 3: ANSWER THE QUESTION USING ONLY THE RELEVANT CHUNKS
 # =========================================================
-
+# NOTE: no try/except wrapping the Gemini call here on purpose. If
+# something breaks, we want to SEE the real error in the Render logs
+# immediately, instead of silently swallowing it and always showing a
+# generic "UNSURE: An error occurred" message that hides the real bug.
 
 def answer_question(user_message: str, context_text: str) -> str:
-    try:
-        if not model:
-            return "UNSURE: Model not initialized."
+    prompt = f"""
+You are a warm, helpful support assistant for Sahara Net. Here is some
+information from the official Sahara Net knowledge base that might help
+answer the question:
 
-        clean_context = context_text[:4000].strip()
+{context_text}
 
-        prompt = f"""
-You are a warm, helpful support assistant for Sahara Net.
-
-Context Information:
-{clean_context}
-
-User Question: "{user_message}"
+User question: "{user_message}"
 
 Rules:
-- Answer using ONLY the information provided in the context above.
-- Be clear and concise (2-4 sentences max).
-- Reply in the SAME language used by the user.
-- If the context does not contain enough information to answer, start your reply with 'UNSURE:'.
+- Answer using ONLY the information above. Do not use anything you
+  already know from outside this text.
+- Sound natural and friendly, not robotic. Short and clear, 2-4
+  sentences max.
+- Answer in the SAME language the user used (Arabic or English).
+- IMPORTANT: if the information above does NOT fully answer the
+  question, your reply must START with the exact word UNSURE: (followed
+  by a short, friendly message saying you're not fully sure and a
+  member of the support team will follow up). This exact prefix is
+  required - do not use any other wording for "I don't know".
 """
-        response = model.generate_content(prompt)
-
-        if response and hasattr(response, "text") and response.text:
-            return response.text.strip()
-        else:
-            return "UNSURE: No response generated."
-
-    except ResourceExhausted:
-        logging.error("Gemini API Quota Exceeded (429). Triggering fallback ticket response.")
-        return "UNSURE: Our AI system is currently experiencing high demand. A support ticket has been created for our team to assist you."
-    except Exception as e:
-        logging.error(f"GEMINI ERROR DETAILS:\n{traceback.format_exc()}")
-        return "UNSURE: An error occurred while generating the answer."
+    response = model.generate_content(prompt)
+    return response.text.strip()
 
 
 # =========================================================
-# STEP 3b: CREATE SUPPORT TICKET IN SUPABASE
+# STEP 3b: TAKE ACTION - open a real support ticket
 # =========================================================
+# The agent decides on its own to create a real ticket when it can't
+# confidently answer. We only check for the single "UNSURE:" prefix
+# (set up above) instead of guessing at many possible phrases - this
+# is simpler and more reliable than matching a long list of keywords.
 
-
-def create_support_ticket(
-    customer_id,
-    user_message: str,
-    ai_reply: str,
-    admin_id=None,
-) -> bool:
-    try:
-        if not SUPABASE_URL or not SUPABASE_KEY:
-            return False
-
-        url = f"{SUPABASE_URL}/rest/v1/support_logs"
-        headers = {
-            "apikey": SUPABASE_KEY,
-            "Authorization": f"Bearer {SUPABASE_KEY}",
-            "Content-Type": "application/json",
-            "Prefer": "return=minimal",
-        }
-
-        now = datetime.utcnow().isoformat()
-
-        data = {
-            "title": "Automated Support Request from Bot",
-            "content": f"Customer Question: {user_message}\n\nBot Reply: {ai_reply}",
-            "status": "open",
-            "created_date": now,
-            "updated_date": now,
-            "phone": "",
-            "contact_email": "",
-        }
-
-        if customer_id and str(customer_id).isdigit():
-            data["customer_id"] = int(customer_id)
-
-        if admin_id and str(admin_id).isdigit():
-            data["admin_id"] = int(admin_id)
-
-        response = requests.post(url, headers=headers, json=data, timeout=10)
-        logging.info(f"Ticket Creation Status: {response.status_code}")
-        return response.status_code in [200, 201]
-    except Exception as e:
-        logging.error(f"Error creating support ticket: {e}")
+def create_support_ticket(customer_id, user_message: str, ai_reply: str) -> bool:
+    if not customer_id:
+        # support_logs.customer_id is required (NOT NULL) in our database,
+        # so we can only open a ticket for a logged-in customer.
+        print("Skipped ticket creation: no customer_id (user not logged in).")
         return False
 
+    url = f"{SUPABASE_URL}/rest/v1/support_logs"
+    headers = {
+        "apikey": SUPABASE_KEY,
+        "Authorization": f"Bearer {SUPABASE_KEY}",
+        "Content-Type": "application/json"
+    }
+    data = {
+        "title": "AI Assistant could not fully answer a question",
+        "content": f"Customer asked: \"{user_message}\"\n\nAI's partial answer: {ai_reply}",
+        "status": "open",
+        "customer_id": int(customer_id)
+    }
+    response = requests.post(url, headers=headers, json=data)
+
+    if response.status_code != 201:
+        print("Ticket creation failed:", response.status_code, response.text)
+    return response.status_code == 201
+
 
 # =========================================================
-# STEP 4: CLASSIFY CATEGORY
+# STEP 4: CLASSIFY THE QUESTION
 # =========================================================
 
 CATEGORIES = [
@@ -287,175 +196,101 @@ CATEGORIES = [
     "Sahara Website Builder",
     "Mobile and Device Settings",
     "Internet Services",
-    "General",
+    "General"
 ]
 
 
 def classify_category(user_message: str) -> str:
-    try:
-        if not model:
-            return "General"
-        prompt = f"Classify this message into EXACTLY ONE: {', '.join(CATEGORIES)}\nMessage: \"{user_message}\""
-        response = model.generate_content(prompt)
-        cat = response.text.strip()
-        return cat if cat in CATEGORIES else "General"
-    except Exception:
-        return "General"
+    prompt = f"""
+Classify this message into EXACTLY ONE of these categories:
+{", ".join(CATEGORIES)}
+
+Reply with ONLY the category name from that list, nothing else.
+
+Message: "{user_message}"
+"""
+    response = model.generate_content(prompt)
+    category = response.text.strip()
+    return category if category in CATEGORIES else "General"
 
 
 # =========================================================
-# STEP 5: SAVE CHAT LOG TO SUPABASE
+# STEP 5: SAVE THE CONVERSATION TO THE DATABASE
 # =========================================================
 
-
-def save_chat_log(
-    session_id, user_message, ai_reply, category, customer_id
-) -> None:
-    try:
-        if not SUPABASE_URL or not SUPABASE_KEY:
-            return
-
-        url = f"{SUPABASE_URL}/rest/v1/ai_chat_logs"
-        headers = {
-            "apikey": SUPABASE_KEY,
-            "Authorization": f"Bearer {SUPABASE_KEY}",
-            "Content-Type": "application/json",
-            "Prefer": "return=minimal",
-        }
-        data = {
-            "session_id": session_id if session_id else str(uuid.uuid4()),
-            "user_message": user_message,
-            "ai_reply": ai_reply,
-            "category": category,
-        }
-
-        if customer_id:
-            data["customer_id"] = customer_id
-
-        requests.post(url, headers=headers, json=data, timeout=5)
-    except Exception as e:
-        logging.error(f"Failed to save chat log: {e}")
+def save_chat_log(session_id, user_message, ai_reply, category, customer_id) -> None:
+    url = f"{SUPABASE_URL}/rest/v1/ai_chat_logs"
+    headers = {
+        "apikey": SUPABASE_KEY,
+        "Authorization": f"Bearer {SUPABASE_KEY}",
+        "Content-Type": "application/json"
+    }
+    data = {
+        "session_id": session_id or str(uuid.uuid4()),
+        "customer_id": customer_id,
+        "user_message": user_message,
+        "ai_reply": ai_reply,
+        "category": category
+    }
+    response = requests.post(url, headers=headers, json=data)
+    if response.status_code != 201:
+        print("Chat log save failed:", response.status_code, response.text)
 
 
 # =========================================================
 # ROUTES
 # =========================================================
 
-
 @app.route("/health", methods=["GET"])
 def health():
-    return jsonify(
-        {
-            "status": "ok",
-            "pdf_characters": len(pdf_text),
-            "chunks": len(pdf_chunks),
-        }
-    )
+    return jsonify({"status": "ok", "pdf_characters": len(pdf_text), "chunks": len(pdf_chunks)})
 
 
 @app.route("/chat", methods=["POST"])
 def chat():
-    try:
-        data = request.get_json() or {}
-        user_message = data.get("message")
-        session_id = data.get("session_id")
-        customer_id = data.get("customer_id")
+    data = request.get_json()
+    user_message = data.get("message")
+    session_id = data.get("session_id")
+    customer_id = data.get("customer_id")
 
-        if not user_message:
-            return jsonify({"error": "message is required"}), 400
+    if not user_message:
+        return jsonify({"error": "message is required"}), 400
 
-        # Step A: Handle Small Talk
-        if is_small_talk(user_message):
-            ai_reply = answer_small_talk(user_message)
-            category = "General"
-            save_chat_log(
-                session_id, user_message, ai_reply, category, customer_id
-            )
-            return jsonify(
-                {
-                    "reply": ai_reply,
-                    "category": category,
-                    "ticket_created": False,
-                }
-            )
+    # Step A: greeting / small talk gets a relaxed, friendly reply
+    if is_small_talk(user_message):
+        ai_reply = answer_small_talk(user_message)
+        category = "General"
+        save_chat_log(session_id, user_message, ai_reply, category, customer_id)
+        return jsonify({"reply": ai_reply, "category": category, "ticket_created": False})
 
-        # Step B: Match Relevant PDF Chunks
-        top_chunks = find_relevant_chunks(user_message)
-        best_score = top_chunks[0][0] if top_chunks else 0
+    # Step B: find the chunks that best match this real question
+    top_chunks = find_relevant_chunks(user_message)
+    best_score = top_chunks[0][0]
 
-        # Step C: Out-Of-Scope Guard
-        if best_score == 0 and len(pdf_chunks) > 0:
-            ai_reply = (
-                "I can only help with questions about Sahara Net's services, "
-                "plans, billing, and support. Please ask something related to "
-                "Sahara Net, or use the Customer Support option for anything else."
-            )
-            category = "General"
-            save_chat_log(
-                session_id, user_message, ai_reply, category, customer_id
-            )
-            return jsonify(
-                {
-                    "reply": ai_reply,
-                    "category": category,
-                    "ticket_created": False,
-                }
-            )
+    # Step C: OUT-OF-SCOPE GUARD - refuse without calling Gemini, no ticket
+    if best_score == 0:
+        ai_reply = ("I can only help with questions about Sahara Net's services, "
+                     "plans, billing, and support. Please ask something related to "
+                     "Sahara Net, or use the Customer Support option for anything else.")
+        category = "General"
+        save_chat_log(session_id, user_message, ai_reply, category, customer_id)
+        return jsonify({"reply": ai_reply, "category": category, "ticket_created": False})
 
-        # Step D: Generate Answer using PDF Context
-        context_text = "\n---\n".join(chunk for score, chunk in top_chunks if score > 0)
-        if not context_text:
-            context_text = "\n---\n".join(chunk for score, chunk in top_chunks)
+    # Step D: build context from only the relevant chunks, get the answer
+    context_text = "\n\n---\n\n".join(chunk for score, chunk in top_chunks)
+    ai_reply = answer_question(user_message, context_text)
+    category = classify_category(user_message)
 
-        ai_reply = answer_question(user_message, context_text)
-        category = classify_category(user_message)
+    # Step E: the agent decides on its own whether to open a ticket
+    ticket_created = False
+    if ai_reply.startswith("UNSURE:"):
+        ai_reply = ai_reply.replace("UNSURE:", "", 1).strip()
+        ticket_created = create_support_ticket(customer_id, user_message, ai_reply)
 
-        # Step E: Trigger Support Ticket if Unsure
-        ticket_created = False
-        unsure_keywords = [
-            "UNSURE:",
-            "فريق الدعم",
-            "غير متأكد",
-            "لست متأكداً",
-            "لست متأكد",
-            "غير متاكد",
-            "تواصل مع الدعم",
-            "سيتابع معك",
-            "An error occurred",
-            "experiencing high demand",
-        ]
+    # Step F: save the conversation either way
+    save_chat_log(session_id, user_message, ai_reply, category, customer_id)
 
-        if any(keyword in ai_reply for keyword in unsure_keywords):
-            clean_reply = ai_reply.replace("UNSURE:", "").strip()
-            ticket_created = create_support_ticket(
-                customer_id, user_message, clean_reply
-            )
-
-        # Step F: Save Chat Log
-        save_chat_log(
-            session_id, user_message, ai_reply, category, customer_id
-        )
-
-        return jsonify(
-            {
-                "reply": ai_reply,
-                "category": category,
-                "ticket_created": ticket_created,
-            }
-        )
-
-    except Exception as e:
-        logging.error(f"Unhandled Error in /chat route:\n{traceback.format_exc()}")
-        return (
-            jsonify(
-                {
-                    "reply": "An issue occurred while processing your request.",
-                    "category": "General",
-                    "ticket_created": False,
-                }
-            ),
-            500,
-        )
+    return jsonify({"reply": ai_reply, "category": category, "ticket_created": ticket_created})
 
 
 if __name__ == "__main__":
