@@ -115,13 +115,11 @@ billing, or support.
 # =========================================================
 # STEP 3: ANSWER THE QUESTION USING ONLY THE RELEVANT CHUNKS
 # =========================================================
-# NOTE: no try/except wrapping the Gemini call here on purpose. If
-# something breaks, we want to SEE the real error in the Render logs
-# immediately, instead of silently swallowing it and always showing a
-# generic "UNSURE: An error occurred" message that hides the real bug.
 
 def answer_question(user_message: str, context_text: str) -> str:
-    prompt = f"""
+    # استخدام try/except هنا آمن لضمان عدم تعطل النظام وإرجاع رسالة خطأ واضحة تفتح تذكرة دعم تلقائياً
+    try:
+        prompt = f"""
 You are a warm, helpful support assistant for Sahara Net. Here is some
 information from the official Sahara Net knowledge base that might help
 answer the question:
@@ -138,26 +136,21 @@ Rules:
 - Answer in the SAME language the user used (Arabic or English).
 - IMPORTANT: if the information above does NOT fully answer the
   question, your reply must START with the exact word UNSURE: (followed
-  by a short, friendly message saying you're not fully sure and a
-  member of the support team will follow up). This exact prefix is
-  required - do not use any other wording for "I don't know".
+  by a short, friendly message stating you couldn't find a direct answer and that a member of our support team will be happy to follow up with you).
 """
-    response = model.generate_content(prompt)
-    return response.text.strip()
+        response = model.generate_content(prompt)
+        return response.text.strip()
+    except Exception as e:
+        print(f"Gemini Error: {e}")
+        return "UNSURE: An error occurred while generating the answer."
 
 
 # =========================================================
 # STEP 3b: TAKE ACTION - open a real support ticket
 # =========================================================
-# The agent decides on its own to create a real ticket when it can't
-# confidently answer. We only check for the single "UNSURE:" prefix
-# (set up above) instead of guessing at many possible phrases - this
-# is simpler and more reliable than matching a long list of keywords.
 
 def create_support_ticket(customer_id, user_message: str, ai_reply: str) -> bool:
     if not customer_id:
-        # support_logs.customer_id is required (NOT NULL) in our database,
-        # so we can only open a ticket for a logged-in customer.
         print("Skipped ticket creation: no customer_id (user not logged in).")
         return False
 
@@ -201,7 +194,8 @@ CATEGORIES = [
 
 
 def classify_category(user_message: str) -> str:
-    prompt = f"""
+    try:
+        prompt = f"""
 Classify this message into EXACTLY ONE of these categories:
 {", ".join(CATEGORIES)}
 
@@ -209,9 +203,11 @@ Reply with ONLY the category name from that list, nothing else.
 
 Message: "{user_message}"
 """
-    response = model.generate_content(prompt)
-    category = response.text.strip()
-    return category if category in CATEGORIES else "General"
+        response = model.generate_content(prompt)
+        category = response.text.strip()
+        return category if category in CATEGORIES else "General"
+    except Exception:
+        return "General"
 
 
 # =========================================================
@@ -267,24 +263,34 @@ def chat():
     top_chunks = find_relevant_chunks(user_message)
     best_score = top_chunks[0][0]
 
-    # Step C: OUT-OF-SCOPE GUARD - refuse without calling Gemini, no ticket
+    # Step C: OUT-OF-SCOPE GUARD - refuse without calling Gemini, and open a support ticket
     if best_score == 0:
-        ai_reply = ("I can only help with questions about Sahara Net's services, "
-                     "plans, billing, and support. Please ask something related to "
-                     "Sahara Net, or use the Customer Support option for anything else.")
+        ai_reply = ("I'm sorry, I couldn't find a direct answer to your question in the information provided. "
+                    "A member of our support team will be happy to follow up with you to help you get these details.")
         category = "General"
+        
+        # فتح تذكرة دعم تلقائياً في جدول support_logs
+        ticket_created = create_support_ticket(customer_id, user_message, ai_reply)
+        
         save_chat_log(session_id, user_message, ai_reply, category, customer_id)
-        return jsonify({"reply": ai_reply, "category": category, "ticket_created": False})
+        return jsonify({"reply": ai_reply, "category": category, "ticket_created": ticket_created})
 
     # Step D: build context from only the relevant chunks, get the answer
     context_text = "\n\n---\n\n".join(chunk for score, chunk in top_chunks)
     ai_reply = answer_question(user_message, context_text)
     category = classify_category(user_message)
 
-    # Step E: the agent decides on its own whether to open a ticket
+    # Step E: the agent decides on its own whether to open a ticket (covers UNSURE: or An error occurred)
     ticket_created = False
-    if ai_reply.startswith("UNSURE:"):
-        ai_reply = ai_reply.replace("UNSURE:", "", 1).strip()
+    if ai_reply.startswith("UNSURE:") or "An error occurred" in ai_reply:
+        if ai_reply.startswith("UNSURE:"):
+            ai_reply = ai_reply.replace("UNSURE:", "", 1).strip()
+            
+        # التأكد من توحيد صيغة الرد في حال عدم المعرفة
+        if not ai_reply or "An error occurred" in ai_reply:
+            ai_reply = ("I'm sorry, I couldn't find a direct answer to your question in the information provided. "
+                        "A member of our support team will be happy to follow up with you to help you get these details.")
+            
         ticket_created = create_support_ticket(customer_id, user_message, ai_reply)
 
     # Step F: save the conversation either way
