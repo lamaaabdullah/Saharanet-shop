@@ -131,13 +131,12 @@ Rules:
 - Answer using ONLY the information above. Do not use anything you already know.
 - Sound natural, friendly, short (2-4 sentences max).
 - Answer in the SAME language the user used (Arabic or English).
-- CRITICAL RULE: If the information above does NOT fully answer the question, or if you don't have the answer in the text, your ENTIRE reply MUST start with the exact word "UNSURE:" followed immediately by a polite message in the SAME language the user used (Arabic or English) explaining that you couldn't find the exact answer and a support team member will follow up.
 """
         response = model.generate_content(prompt)
         return response.text.strip()
     except Exception as e:
         print(f"Gemini Error: {e}")
-        return "UNSURE: An error occurred while generating the answer."
+        return "I apologize, but an error occurred while generating the answer."
 
 
 # =========================================================
@@ -145,10 +144,6 @@ Rules:
 # =========================================================
 
 def create_support_ticket(customer_id, user_message: str, ai_reply: str) -> bool:
-    if not customer_id:
-        print("Skipped ticket creation: no customer_id (user not logged in).")
-        return False
-
     url = f"{SUPABASE_URL}/rest/v1/support_logs"
     headers = {
         "apikey": SUPABASE_KEY,
@@ -159,7 +154,7 @@ def create_support_ticket(customer_id, user_message: str, ai_reply: str) -> bool
         "title": "AI Assistant could not fully answer a question",
         "content": f"Customer asked: \"{user_message}\"\n\nAI's partial answer: {ai_reply}",
         "status": "open",
-        "customer_id": int(customer_id)
+        "customer_id": int(customer_id) if customer_id else None
     }
     response = requests.post(url, headers=headers, json=data)
 
@@ -282,7 +277,6 @@ def chat():
     ticket_created = False
     lower_reply = ai_reply.lower()
 
-    # فحص شامل لأي صيغة اعتذار إنجليزية أو عربية
     is_unsure = (
         ai_reply.startswith("UNSURE:") or 
         "unsure:" in lower_reply or 
@@ -306,7 +300,6 @@ def chat():
     )
 
     if is_unsure:
-        # إزالة بادئة UNSURE لو وجدت نظافةً للرد
         if ai_reply.startswith("UNSURE:"):
             ai_reply = ai_reply.replace("UNSURE:", "", 1).strip()
         elif "unsure:" in ai_reply.lower():
@@ -318,3 +311,8 @@ def chat():
     save_chat_log(session_id, user_message, ai_reply, category, customer_id)
 
     return jsonify({"reply": ai_reply, "category": category, "ticket_created": ticket_created})
+
+
+if __name__ == "__main__":
+    port = int(os.environ.get("PORT", 5000))
+    app.run(host="0.0.0.0", port=port, debug=True)
