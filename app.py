@@ -128,14 +128,10 @@ answer the question:
 User question: "{user_message}"
 
 Rules:
-- Answer using ONLY the information above. Do not use anything you
-  already know from outside this text.
-- Sound natural and friendly, not robotic. Short and clear, 2-4
-  sentences max.
+- Answer using ONLY the information above. Do not use anything you already know.
+- Sound natural, friendly, short (2-4 sentences max).
 - Answer in the SAME language the user used (Arabic or English).
-- IMPORTANT: if the information above does NOT fully answer the
-  question, your reply must START with the exact word UNSURE: (followed
-  by a short, friendly message stating you couldn't find a direct answer and that a member of our support team will be happy to follow up with you).
+- CRITICAL RULE: If the information above does NOT fully answer the question, or if you don't have the answer in the text, your ENTIRE reply MUST start with the exact word "UNSURE:" followed immediately by a polite message in the SAME language the user used (Arabic or English) explaining that you couldn't find the exact answer and a support team member will follow up.
 """
         response = model.generate_content(prompt)
         return response.text.strip()
@@ -264,12 +260,17 @@ def chat():
 
     # Step C: OUT-OF-SCOPE GUARD - score is 0
     if best_score == 0:
-        ai_reply = ("I'm sorry, I couldn't find a direct answer to your question in the information provided. "
-                    "A member of our support team will be happy to follow up with you to help you get these details.")
+        # اكتشاف إذا كانت رسالة المستخدم عربية أم إنجليزية لصياغة الرد المناسب
+        is_arabic = bool(re.search(r"[\u0600-\u06FF]", user_message))
+        if is_arabic:
+            ai_reply = ("عذراً، لم أتمكن من العثور على إجابة مباشرة لسؤالك في المعلومات المتوفرة. "
+                        "سيسعد أحد أعضاء فريق الدعم لدينا بالتواصل معك لمساعدتك في الحصول على هذه التفاصيل.")
+        else:
+            ai_reply = ("I'm sorry, I couldn't find a direct answer to your question in the information provided. "
+                        "A member of our support team will be happy to follow up with you to help you get these details.")
+        
         category = "General"
-        
         ticket_created = create_support_ticket(customer_id, user_message, ai_reply)
-        
         save_chat_log(session_id, user_message, ai_reply, category, customer_id)
         return jsonify({"reply": ai_reply, "category": category, "ticket_created": ticket_created})
 
@@ -278,38 +279,12 @@ def chat():
     ai_reply = answer_question(user_message, context_text)
     category = classify_category(user_message)
 
-    # Step E: Comprehensive check for English and Arabic unsure/apology scenarios
+    # Step E: Check for UNSURE prefix to trigger ticket creation reliably
     ticket_created = False
-    lower_reply = ai_reply.lower()
-
-    is_unsure = (
-        ai_reply.startswith("UNSURE:") or 
-        # English Scenarios
-        "couldn't find" in lower_reply or 
-        "can't find" in lower_reply or 
-        "not found" in lower_reply or 
-        "i'm sorry" in lower_reply or
-        "sorry" in lower_reply or
-        "an error occurred" in lower_reply or
-        # Arabic Scenarios
-        "عذرا" in ai_reply or
-        "عذرآ" in ai_reply or
-        "آسف" in ai_reply or
-        "عفو" in ai_reply or
-        "لا أستطيع" in ai_reply or
-        "لا يمكنني" in ai_reply or
-        "لا توفر" in ai_reply or
-        "لا يتوفر" in ai_reply or
-        "لا يوجد" in ai_reply or
-        "لم أجد" in ai_reply or
-        "لم يتم العثور" in ai_reply or
-        "معلومات كافية" in ai_reply or
-        "فريق الدعم" in ai_reply
-    )
-
-    if is_unsure:
-        if ai_reply.startswith("UNSURE:"):
-            ai_reply = ai_reply.replace("UNSURE:", "", 1).strip()
+    
+    if ai_reply.startswith("UNSURE:") or "unsure:" in ai_reply.lower():
+        if ai_reply.lower().startswith("unsure:"):
+            ai_reply = ai_reply.split(":", 1)[1].strip()
             
         ticket_created = create_support_ticket(customer_id, user_message, ai_reply)
 
