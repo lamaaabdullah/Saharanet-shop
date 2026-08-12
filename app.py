@@ -38,7 +38,7 @@ def read_pdf_text(path: str) -> str:
     return full_text
 
 
-def split_into_chunks(text: str, chunk_size: int = 2000) -> list[str]:
+def split_into_chunks(text: str, chunk_size: int = 600) -> list[str]:
     chunks = []
     for i in range(0, len(text), chunk_size):
         chunk = text[i:i + chunk_size].strip()
