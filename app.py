@@ -278,23 +278,38 @@ def chat():
     ai_reply = answer_question(user_message, context_text)
     category = classify_category(user_message)
 
-    # Step E: Check if the model is unsure or couldn't find an answer to trigger ticket creation
+    # Step E: Comprehensive check for English and Arabic unsure/apology scenarios
     ticket_created = False
+    lower_reply = ai_reply.lower()
+
     is_unsure = (
         ai_reply.startswith("UNSURE:") or 
-        "couldn't find" in ai_reply.lower() or 
-        "not found" in ai_reply.lower() or 
-        "i'm sorry" in ai_reply.lower() or
-        "an error occurred" in ai_reply.lower()
+        # English Scenarios
+        "couldn't find" in lower_reply or 
+        "can't find" in lower_reply or 
+        "not found" in lower_reply or 
+        "i'm sorry" in lower_reply or
+        "sorry" in lower_reply or
+        "an error occurred" in lower_reply or
+        # Arabic Scenarios
+        "عذرا" in ai_reply or
+        "عذرآ" in ai_reply or
+        "آسف" in ai_reply or
+        "عفو" in ai_reply or
+        "لا أستطيع" in ai_reply or
+        "لا يمكنني" in ai_reply or
+        "لا توفر" in ai_reply or
+        "لا يتوفر" in ai_reply or
+        "لا يوجد" in ai_reply or
+        "لم أجد" in ai_reply or
+        "لم يتم العثور" in ai_reply or
+        "معلومات كافية" in ai_reply or
+        "فريق الدعم" in ai_reply
     )
 
     if is_unsure:
         if ai_reply.startswith("UNSURE:"):
             ai_reply = ai_reply.replace("UNSURE:", "", 1).strip()
-            
-        if not ai_reply or "An error occurred" in ai_reply:
-            ai_reply = ("I'm sorry, I couldn't find a direct answer to your question in the information provided. "
-                        "A member of our support team will be happy to follow up with you to help you get these details.")
             
         ticket_created = create_support_ticket(customer_id, user_message, ai_reply)
 
