@@ -117,7 +117,6 @@ billing, or support.
 # =========================================================
 
 def answer_question(user_message: str, context_text: str) -> str:
-    # استخدام try/except هنا آمن لضمان عدم تعطل النظام وإرجاع رسالة خطأ واضحة تفتح تذكرة دعم تلقائياً
     try:
         prompt = f"""
 You are a warm, helpful support assistant for Sahara Net. Here is some
@@ -160,6 +159,7 @@ def create_support_ticket(customer_id, user_message: str, ai_reply: str) -> bool
         "Authorization": f"Bearer {SUPABASE_KEY}",
         "Content-Type": "application/json"
     }
+    # مطابقة الأعمدة الظاهرة في صورة جدول support_logs: title, content, status, customer_id
     data = {
         "title": "AI Assistant could not fully answer a question",
         "content": f"Customer asked: \"{user_message}\"\n\nAI's partial answer: {ai_reply}",
@@ -221,9 +221,10 @@ def save_chat_log(session_id, user_message, ai_reply, category, customer_id) -> 
         "Authorization": f"Bearer {SUPABASE_KEY}",
         "Content-Type": "application/json"
     }
+    # مطابقة الأعمدة الظاهرة في صورة جدول ai_chat_logs: session_id, customer_id, user_message, ai_reply, category
     data = {
         "session_id": session_id or str(uuid.uuid4()),
-        "customer_id": customer_id,
+        "customer_id": int(customer_id) if customer_id else None,
         "user_message": user_message,
         "ai_reply": ai_reply,
         "category": category
@@ -286,7 +287,6 @@ def chat():
         if ai_reply.startswith("UNSURE:"):
             ai_reply = ai_reply.replace("UNSURE:", "", 1).strip()
             
-        # التأكد من توحيد صيغة الرد في حال عدم المعرفة
         if not ai_reply or "An error occurred" in ai_reply:
             ai_reply = ("I'm sorry, I couldn't find a direct answer to your question in the information provided. "
                         "A member of our support team will be happy to follow up with you to help you get these details.")
