@@ -260,7 +260,6 @@ def chat():
 
     # Step C: OUT-OF-SCOPE GUARD - score is 0
     if best_score == 0:
-        # اكتشاف إذا كانت رسالة المستخدم عربية أم إنجليزية لصياغة الرد المناسب
         is_arabic = bool(re.search(r"[\u0600-\u06FF]", user_message))
         if is_arabic:
             ai_reply = ("عذراً، لم أتمكن من العثور على إجابة مباشرة لسؤالك في المعلومات المتوفرة. "
@@ -279,11 +278,38 @@ def chat():
     ai_reply = answer_question(user_message, context_text)
     category = classify_category(user_message)
 
-    # Step E: Check for UNSURE prefix to trigger ticket creation reliably
+    # Step E: الذكاء البرمجي للتحقق من أي رد اعتذار وفتح التذكرة تلقائياً
     ticket_created = False
-    
-    if ai_reply.startswith("UNSURE:") or "unsure:" in ai_reply.lower():
-        if ai_reply.lower().startswith("unsure:"):
+    lower_reply = ai_reply.lower()
+
+    # فحص شامل لأي صيغة اعتذار إنجليزية أو عربية
+    is_unsure = (
+        ai_reply.startswith("UNSURE:") or 
+        "unsure:" in lower_reply or 
+        "apologize" in lower_reply or 
+        "apology" in lower_reply or 
+        "couldn't find" in lower_reply or 
+        "can't find" in lower_reply or 
+        "not found" in lower_reply or 
+        "i'm sorry" in lower_reply or
+        "sorry" in lower_reply or
+        "does not contain" in lower_reply or
+        "do not contain" in lower_reply or
+        # باللغة العربية
+        "عذرا" in ai_reply or
+        "عذرآ" in ai_reply or
+        "آسف" in ai_reply or
+        "لا أستطيع" in ai_reply or
+        "لا يمكنني" in ai_reply or
+        "لا يحتوي" in ai_reply or
+        "لم أجد" in ai_reply
+    )
+
+    if is_unsure:
+        # إزالة بادئة UNSURE لو وجدت نظافةً للرد
+        if ai_reply.startswith("UNSURE:"):
+            ai_reply = ai_reply.replace("UNSURE:", "", 1).strip()
+        elif "unsure:" in ai_reply.lower():
             ai_reply = ai_reply.split(":", 1)[1].strip()
             
         ticket_created = create_support_ticket(customer_id, user_message, ai_reply)
@@ -292,8 +318,3 @@ def chat():
     save_chat_log(session_id, user_message, ai_reply, category, customer_id)
 
     return jsonify({"reply": ai_reply, "category": category, "ticket_created": ticket_created})
-
-
-if __name__ == "__main__":
-    port = int(os.environ.get("PORT", 5000))
-    app.run(host="0.0.0.0", port=port, debug=True)
